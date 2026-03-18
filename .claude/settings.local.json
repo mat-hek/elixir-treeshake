@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mix compile:*)",
+      "Bash(mix new:*)",
+      "Bash(MIX_ENV=prod mix compile)",
+      "Bash(ls -lh /tmp/demo_app/_build/prod/lib/demo_app/ebin/*.beam)",
+      "Bash(beam_file=/tmp/demo_app/_build/prod/lib/demo_app/ebin/Elixir.DemoApp.Worker.beam)",
+      "Bash(elixir -e ':beam_lib.chunks\\(~c\"\"'\"$beam_file\"'\"\", [:abstract_code]\\) |> elem\\(1\\) |> elem\\(1\\) |> hd\\(\\) |> elem\\(1\\) |> elem\\(1\\) |> Enum.each\\(fn {:function,_,n,a,_} -> IO.puts\\(\"\"  #{n}/#{a}\"\"\\); _ -> :ok end\\)')",
+      "Bash(elixir -e ':*)",
+      "Bash(./treeshake --dry-run --verbose /tmp/demo_app)",
+      "Bash(mix escript.build)",
+      "Bash(./treeshake --output /tmp/demo_app_shaken --verbose /tmp/demo_app)",
+      "Bash(ls /tmp/demo_app/_build/prod/lib/demo_app/ebin/*.beam)",
+      "Bash(xargs -I{} basename {})",
+      "Read(//private/tmp/demo_app_shaken/**)",
+      "Bash(mix test:*)",
+      "Bash(mix treeshake:*)",
+      "Bash(PLT=/tmp/demo_app/_build/prod/treeshake.plt)",
+      "Bash(EBIN=/tmp/demo_app/_build/prod/lib/demo_app/ebin)",
+      "Bash(dialyzer --callgraph /tmp/cg_test.dot --plt \"$PLT\" -r \"$EBIN\")",
+      "Bash(echo \"exit: $?\")",
+      "Read(//tmp/**)"
+    ]
+  }
+}

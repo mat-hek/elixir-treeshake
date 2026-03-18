@@ -1,0 +1,9 @@
+defmodule DemoApp.Worker do
+  # Called from Application.start/2 — reachable.
+  def process(input) do
+    input |> upcase() |> wrap()
+  end
+
+  defp upcase(s), do: String.upcase(s)
+  defp wrap(s), do: "[#{s}]"
+end
