@@ -1,4 +1,4 @@
-defmodule Treeshake.DotParser do
+defmodule Treeshake.Utils.DotParser do
   @moduledoc """
   Parses the DOT-format call graph produced by `dialyzer --callgraph <file>`.
 
@@ -33,24 +33,21 @@ defmodule Treeshake.DotParser do
   @doc """
   Parse DOT content from a string and return an adjacency map.
   """
-  @spec parse_content(String.t()) :: {:ok, graph()}
+  @spec parse_content(String.t()) :: graph()
   def parse_content(content) do
-    graph =
-      content
-      |> extract_edge_strings()
-      |> Enum.flat_map(fn {from_str, to_str} ->
-        with {:ok, from} <- parse_mfa(from_str),
-             {:ok, to} <- parse_mfa(to_str) do
-          [{from, to}]
-        else
-          _ -> []
-        end
-      end)
-      |> Enum.reduce(%{}, fn {from, to}, acc ->
-        Map.update(acc, from, [to], &[to | &1])
-      end)
-
-    {:ok, graph}
+    content
+    |> extract_edge_strings()
+    |> Enum.flat_map(fn {from_str, to_str} ->
+      with {:ok, from} <- parse_mfa(from_str),
+           {:ok, to} <- parse_mfa(to_str) do
+        [{from, to}]
+      else
+        _ -> []
+      end
+    end)
+    |> Enum.reduce(%{}, fn {from, to}, acc ->
+      Map.update(acc, from, [to], &[to | &1])
+    end)
   end
 
   @doc """

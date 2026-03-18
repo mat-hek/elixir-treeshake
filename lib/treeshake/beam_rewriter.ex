@@ -54,13 +54,14 @@ defmodule Treeshake.BeamRewriter do
   and return a statistics map.
   """
   @spec rewrite(Project.t(), map(), keyword()) :: stats()
-  def rewrite(project, reachable, opts \\ []) do
+  def rewrite(all_beams, reachable, opts \\ []) do
     output_dir = Keyword.get(opts, :output_dir)
     dry_run = Keyword.get(opts, :dry_run, false)
 
     if output_dir && not dry_run do
       File.mkdir_p!(output_dir)
-      Enum.each(project.all_beam_files, fn src ->
+
+      Enum.each(all_beams, fn src ->
         File.copy!(src, Path.join(output_dir, Path.basename(src)))
       end)
     end
@@ -72,8 +73,8 @@ defmodule Treeshake.BeamRewriter do
       skipped_no_debug_info: []
     }
 
-    Enum.reduce(project.all_beam_files, empty_stats, fn beam_path, stats ->
-      module = Project.module_from_beam(beam_path)
+    Enum.reduce(all_beams, empty_stats, fn beam_path, stats ->
+      module = beam_path |> Path.basename(".beam") |> String.to_atom()
       effective = effective_path(beam_path, output_dir)
 
       if MapSet.member?(reachable.modules, module) do
@@ -127,7 +128,6 @@ defmodule Treeshake.BeamRewriter do
 
   defp process_live_module(beam_path, module, reachable, stats, opts) do
     remove_exports = Keyword.get(opts, :remove_exports, false)
-    dry_run = Keyword.get(opts, :dry_run, false)
 
     dead = find_dead_functions(beam_path, module, reachable, remove_exports)
 
@@ -138,24 +138,20 @@ defmodule Treeshake.BeamRewriter do
         verbose_log(opts, "  [-] #{m}.#{f}/#{a}")
       end)
 
-      if dry_run do
-        Map.update!(stats, :functions_removed, &(dead ++ &1))
-      else
-        dead_set = MapSet.new(dead)
+      dead_set = MapSet.new(dead)
 
-        case remove_functions(beam_path, module, dead_set, opts) do
-          :ok ->
-            stats
-            |> Map.update!(:functions_removed, &(dead ++ &1))
-            |> Map.update!(:modules_rewritten, &[module | &1])
+      case remove_functions(beam_path, module, dead_set, opts) do
+        :ok ->
+          stats
+          |> Map.update!(:functions_removed, &(dead ++ &1))
+          |> Map.update!(:modules_rewritten, &[module | &1])
 
-          {:error, :no_abstract_code} ->
-            Map.update!(stats, :skipped_no_debug_info, &[module | &1])
+        {:error, :no_abstract_code} ->
+          Map.update!(stats, :skipped_no_debug_info, &[module | &1])
 
-          {:error, reason} ->
-            IO.warn("Failed to rewrite #{inspect(module)}: #{inspect(reason)}")
-            stats
-        end
+        {:error, reason} ->
+          IO.warn("Failed to rewrite #{inspect(module)}: #{inspect(reason)}")
+          stats
       end
     end
   end
@@ -171,6 +167,8 @@ defmodule Treeshake.BeamRewriter do
   end
 
   defp rewrite_via_abstract_code(beam_path, module, forms, funcs_to_remove, opts) do
+    dry_run = Keyword.get(opts, :dry_run, false)
+
     new_forms =
       Enum.reject(forms, fn
         {:function, _line, name, arity, _clauses} ->
@@ -190,7 +188,10 @@ defmodule Treeshake.BeamRewriter do
 
     case :compile.forms(new_forms, compile_opts) do
       {:ok, ^module, binary, _warnings} ->
-        File.write!(beam_path, binary)
+        if not dry_run do
+          File.write!(beam_path, binary)
+        end
+
         :ok
 
       {:error, errors, _warnings} ->

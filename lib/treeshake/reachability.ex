@@ -18,8 +18,8 @@ defmodule Treeshake.Reachability do
 
   Returns `{:ok, %{mfas: reachable_mfa_set, modules: reachable_module_set}}`.
   """
-  @spec compute(graph(), Enumerable.t(mfa_tuple())) :: {:ok, result()}
-  def compute(call_graph, entry_points) do
+  @spec find_reachable(graph(), Enumerable.t(mfa_tuple())) :: result()
+  def find_reachable(call_graph, entry_points) do
     seeds = Enum.to_list(entry_points)
     visited = bfs(call_graph, :queue.from_list(seeds), MapSet.new(seeds))
 
@@ -29,16 +29,16 @@ defmodule Treeshake.Reachability do
       |> Enum.map(fn {m, _f, _a} -> m end)
       |> MapSet.new()
 
-    {:ok, %{mfas: visited, modules: modules}}
+    %{mfas: visited, modules: modules}
   end
 
   @doc """
   Given the full list of MFAs defined in the project and the reachability
   result from `compute/2`, return the dead (unreachable) MFAs and modules.
   """
-  @spec compute_dead([mfa_tuple()], result()) ::
+  @spec find_dead([mfa_tuple()], result()) ::
           %{dead_mfas: [mfa_tuple()], dead_modules: [atom()]}
-  def compute_dead(all_mfas, reachable) do
+  def find_dead(all_mfas, reachable) do
     all_modules = all_mfas |> Enum.map(fn {m, _f, _a} -> m end) |> Enum.uniq()
 
     dead_mfas = Enum.reject(all_mfas, &MapSet.member?(reachable.mfas, &1))

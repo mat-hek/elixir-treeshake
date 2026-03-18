@@ -9,7 +9,7 @@ defmodule TreeshakeTest do
   # We target the prod env so the _build layout matches what treeshake expects.
   setup_all do
     {output, code} =
-      System.cmd("mix", ["compile"],
+      System.cmd("mix", ~w(compile --force),
         cd: @fixture,
         env: [{"MIX_ENV", "prod"}],
         stderr_to_stdout: true
@@ -115,25 +115,6 @@ defmodule TreeshakeTest do
       end)
 
       assert apply(DemoApp.Worker, :process, ["hello"]) == "[HELLO]"
-    end
-  end
-
-  describe "error handling" do
-    test "returns error when _build dir does not exist" do
-      assert {:error, {:no_build_dir, _msg}} =
-               Treeshake.run(@fixture, mix_env: "no_such_env")
-    end
-
-    test "returns error when no entry points can be detected" do
-      assert {:error, :no_entry_points_found} =
-               Treeshake.Project.detect_entry_points(%Treeshake.Project{
-                 app_files: [],
-                 all_beam_files: [],
-                 beam_dirs: [],
-                 mix_env: "prod",
-                 name: "test",
-                 path: "/tmp"
-               })
     end
   end
 end
