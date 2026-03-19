@@ -6,4 +6,8 @@ defmodule DemoApp.Worker do
 
   defp upcase(s), do: String.upcase(s)
   defp wrap(s), do: "[#{s}]"
+
+  def unused(foo) do
+    foo + 1
+  end
 end

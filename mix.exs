@@ -17,6 +17,6 @@ defmodule Treeshake.MixProject do
   end
 
   defp deps do
-    []
+    [{:async_test, github: "software-mansion-labs/elixir_async_test", only: :test}]
   end
 end

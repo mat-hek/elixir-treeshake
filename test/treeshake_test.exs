@@ -1,5 +1,7 @@
 defmodule TreeshakeTest do
-  use ExUnit.Case
+  use ExUnit.Case, async: true
+
+  import AsyncTest
 
   @fixture Path.expand("fixtures/demo_app", __DIR__)
 
@@ -21,7 +23,7 @@ defmodule TreeshakeTest do
   end
 
   describe "module-level removal" do
-    test "removes entirely unreachable modules", %{tmp_dir: output_dir} do
+    async_test "removes entirely unreachable modules", %{tmp_dir: output_dir} do
       assert {:ok, stats} = Treeshake.run(@fixture, output_dir: output_dir, mix_env: "prod")
 
       assert DemoApp.DeadModule in stats.modules_removed
@@ -30,14 +32,14 @@ defmodule TreeshakeTest do
       assert DemoApp in stats.modules_removed
     end
 
-    test "keeps reachable modules", %{tmp_dir: output_dir} do
+    async_test "keeps reachable modules", %{tmp_dir: output_dir} do
       assert {:ok, stats} = Treeshake.run(@fixture, output_dir: output_dir, mix_env: "prod")
 
       refute DemoApp.Application in stats.modules_removed
       refute DemoApp.Worker in stats.modules_removed
     end
 
-    test "deletes BEAM files for dead modules", %{tmp_dir: output_dir} do
+    async_test "deletes BEAM files for dead modules", %{tmp_dir: output_dir} do
       assert {:ok, _stats} = Treeshake.run(@fixture, output_dir: output_dir, mix_env: "prod")
 
       refute File.exists?(Path.join(output_dir, "Elixir.DemoApp.DeadModule.beam"))
@@ -45,14 +47,14 @@ defmodule TreeshakeTest do
       refute File.exists?(Path.join(output_dir, "Elixir.DemoApp.beam"))
     end
 
-    test "keeps BEAM files for live modules", %{tmp_dir: output_dir} do
+    async_test "keeps BEAM files for live modules", %{tmp_dir: output_dir} do
       assert {:ok, _stats} = Treeshake.run(@fixture, output_dir: output_dir, mix_env: "prod")
 
       assert File.exists?(Path.join(output_dir, "Elixir.DemoApp.Application.beam"))
       assert File.exists?(Path.join(output_dir, "Elixir.DemoApp.Worker.beam"))
     end
 
-    test "output contains only the surviving BEAMs", %{tmp_dir: output_dir} do
+    async_test "output contains only the surviving BEAMs", %{tmp_dir: output_dir} do
       assert {:ok, _stats} = Treeshake.run(@fixture, output_dir: output_dir, mix_env: "prod")
 
       surviving = output_dir |> File.ls!() |> Enum.sort()
@@ -60,8 +62,33 @@ defmodule TreeshakeTest do
     end
   end
 
+  describe "function-level removal" do
+    async_test "removes unused/1 from DemoApp.Worker (non-dead module)", %{tmp_dir: output_dir} do
+      assert {:ok, stats} = Treeshake.run(@fixture, output_dir: output_dir, mix_env: "prod")
+
+      assert {DemoApp.Worker, :unused, 1} in stats.functions_removed
+    end
+
+    async_test "unused/1 is not callable after tree-shaking", %{tmp_dir: output_dir} do
+      assert {:ok, _stats} = Treeshake.run(@fixture, output_dir: output_dir, mix_env: "prod")
+
+      beam_path = Path.join(output_dir, "Elixir.DemoApp.Worker.beam")
+      {:ok, binary} = File.read(beam_path)
+
+      assert {:module, DemoApp.Worker} =
+               :code.load_binary(DemoApp.Worker, String.to_charlist(beam_path), binary)
+
+      on_exit(fn ->
+        :code.purge(DemoApp.Worker)
+        :code.delete(DemoApp.Worker)
+      end)
+
+      refute function_exported?(DemoApp.Worker, :unused, 1)
+    end
+  end
+
   describe "dry run" do
-    test "does not write or delete any files", %{tmp_dir: output_dir} do
+    async_test "does not write or delete any files", %{tmp_dir: output_dir} do
       ebin = Path.join([@fixture, "_build", "prod", "lib", "demo_app", "ebin"])
       before_files = ebin |> File.ls!() |> Enum.sort()
 
@@ -74,9 +101,8 @@ defmodule TreeshakeTest do
       assert ^before_files = ebin |> File.ls!() |> Enum.sort()
     end
 
-    test "still reports what would be removed", %{tmp_dir: output_dir} do
-      assert {:ok, stats} =
-               Treeshake.run(@fixture, dry_run: true, mix_env: "prod", output_dir: output_dir)
+    async_test "still reports what would be removed" do
+      assert {:ok, stats} = Treeshake.run(@fixture, dry_run: true, mix_env: "prod")
 
       assert DemoApp.DeadModule in stats.modules_removed
       assert DemoApp.AnotherDead in stats.modules_removed
@@ -85,7 +111,7 @@ defmodule TreeshakeTest do
   end
 
   describe "output directory isolation" do
-    test "original ebin is not modified when --output is set", %{tmp_dir: output_dir} do
+    async_test "original ebin is not modified when --output is set", %{tmp_dir: output_dir} do
       ebin = Path.join([@fixture, "_build", "prod", "lib", "demo_app", "ebin"])
       before_files = ebin |> File.ls!() |> Enum.sort()
 
@@ -96,7 +122,8 @@ defmodule TreeshakeTest do
   end
 
   describe "correctness" do
-    test "surviving modules are callable after tree-shaking", %{tmp_dir: output_dir} do
+    @tag :target
+    async_test "surviving modules are callable after tree-shaking", %{tmp_dir: output_dir} do
       assert {:ok, _stats} = Treeshake.run(@fixture, output_dir: output_dir, mix_env: "prod")
 
       survivors = [DemoApp.Application, DemoApp.Worker]
