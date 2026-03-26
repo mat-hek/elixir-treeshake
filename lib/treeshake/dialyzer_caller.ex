@@ -1,47 +1,64 @@
 defmodule Treeshake.DialyzerCaller do
-  @tmp_dir "/Users/matheksm/treeshake/dialyzer_tmp"
-  @base_plt Path.join(@tmp_dir, "base.plt")
-
   @otp_apps [:erts, :kernel, :stdlib]
 
-  def get_call_graph(beams_paths) do
-    plt_path = build_plt(beams_paths)
-    build_call_graph(plt_path, beams_paths)
+  def get_call_graph(beam_dirs, opts \\ []) do
+    plt_path = build_plt(beam_dirs, opts)
+    build_call_graph(plt_path, beam_dirs, opts)
   end
 
-  defp build_plt(beams_paths) do
-    if not File.exists?(@base_plt) do
-      # Build base plt
-      run_dialyzer(~w|
-        --build_plt
-        --output_plt #{@base_plt}
-        --apps #{Enum.join(@otp_apps, " ")}
-        -pa #{elixir_ebin()}
-        -r #{elixir_ebin()}
-        |)
+  defp build_plt(beam_dirs, opts) do
+    tmp_dir = Keyword.fetch!(opts, :tmp_dir)
+    build_base_plt = Keyword.get(opts, :build_base_plt, true)
+    # base_plt = Path.join(tmp_dir, "base.plt")
+    base_plt = "/Users/matheksm/treeshake/dialyzer_tmp/base.plt"
+
+    if build_base_plt do
+      take_lock(base_plt <> ".lock", fn ->
+        unless File.exists?(base_plt) do
+          # Build base plt
+          run_dialyzer(~w|
+          --build_plt
+          --output_plt #{base_plt}
+          --apps #{Enum.join(@otp_apps, " ")}
+          -pa #{elixir_ebin()}
+          -r #{elixir_ebin()}
+          |)
+        end
+      end)
     end
 
     # Build project plt
-    File.mkdir_p!(Path.join(@tmp_dir, "proj_plt"))
-    plt_path = Path.join(@tmp_dir, "proj_plt/proj_plt_#{datetime_now()}.plt")
-    run_dialyzer(~w|
-      --add_to_plt
-      --plt #{@base_plt}
-      --output_plt #{plt_path}
-      -pa #{elixir_ebin()}
-      | ++ Enum.flat_map(beams_paths, &~w|-r #{&1}|))
+    File.mkdir_p!(Path.join(tmp_dir, "proj_plt"))
+    cache_ref = Keyword.get(opts, :cache_ref, random_str())
+    plt_path = Path.join(tmp_dir, "proj_plt/proj_plt_#{cache_ref}.plt")
+
+    unless File.exists?(plt_path) do
+      run_dialyzer(
+        ~w|
+        --output_plt #{plt_path}
+        -pa #{elixir_ebin()}
+        | ++
+          Enum.flat_map(beam_dirs, &~w|-r #{&1}|) ++
+          if(build_base_plt, do: ~w|--add_to_plt --plt #{base_plt}|, else: ~w|--build_plt|)
+      )
+    end
 
     plt_path
   end
 
-  defp build_call_graph(plt_path, beams_paths) do
-    File.mkdir_p!(Path.join(@tmp_dir, "callgraph"))
-    callgraph_path = Path.join(@tmp_dir, "callgraph/callgraph_#{datetime_now()}.dot")
-    run_dialyzer(~w|
+  defp build_call_graph(plt_path, beam_dirs, opts) do
+    tmp_dir = Keyword.fetch!(opts, :tmp_dir)
+    File.mkdir_p!(Path.join(tmp_dir, "callgraph"))
+    cache_ref = Keyword.get(opts, :cache_ref, random_str())
+    callgraph_path = Path.join(tmp_dir, "callgraph/callgraph_#{cache_ref}.dot")
+
+    unless File.exists?(callgraph_path) do
+      run_dialyzer(~w|
       --dump_callgraph #{callgraph_path}
       --plt #{plt_path}
       -pa #{elixir_ebin()}
-    | ++ Enum.flat_map(beams_paths, &~w|-r #{&1}|))
+    | ++ Enum.flat_map(beam_dirs, &~w|-r #{&1}|))
+    end
 
     File.read!(callgraph_path)
     |> Treeshake.Utils.DotParser.parse_content()
@@ -58,7 +75,11 @@ defmodule Treeshake.DialyzerCaller do
   end
 
   defp run_dialyzer(args, cmd_args \\ []) do
-    case System.cmd("dialyzer", args, [stderr_to_stdout: true] ++ cmd_args) do
+    case System.cmd(
+           "dialyzer",
+           args,
+           [stderr_to_stdout: true, into: IO.stream(:stdio, :line)] ++ cmd_args
+         ) do
       {_output, code} when code in 0..2 ->
         # 0 = success, 1 = warnings, 2 = unknown functions — all acceptable
         # for PLT build/update; the file is written regardless.
@@ -69,7 +90,28 @@ defmodule Treeshake.DialyzerCaller do
     end
   end
 
-  defp datetime_now() do
-    DateTime.utc_now() |> DateTime.to_iso8601()
+  defp random_str() do
+    datetime = DateTime.utc_now() |> DateTime.to_iso8601()
+    random = Enum.random(0..100_000) |> to_string() |> String.pad_leading(6, "0")
+    datetime <> "-" <> random
+  end
+
+  def take_lock(path, fun) do
+    case File.open(path, [:write, :exclusive]) do
+      {:ok, file} ->
+        File.close(file)
+        fun.()
+        File.rm(path)
+
+      {:error, :eexist} ->
+        # File already existed
+        Stream.interval(100)
+        |> Enum.find(fn _i -> not File.exists?(path) end)
+
+        false
+
+      {:error, reason} ->
+        raise File.Error, reason: reason, action: "create", path: path
+    end
   end
 end

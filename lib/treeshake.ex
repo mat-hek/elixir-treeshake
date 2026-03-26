@@ -3,31 +3,38 @@ defmodule Treeshake do
     mix_env = "prod"
     path = Path.expand(project_path)
     build_dir = Path.join([path, "_build", mix_env])
-    beam_dirs = find_beam_dirs(build_dir)
-    all_beams = Enum.flat_map(beam_dirs, &Path.wildcard(Path.join(&1, "*.beam")))
 
     if not File.dir?(build_dir) do
       raise "Run `MIX_ENV=#{mix_env} mix compile` first. Expected: #{build_dir}"
     end
 
-    entry_points = detect_entry_points(build_dir)
+    beam_dirs = find_beam_dirs(build_dir)
+    run_beams(beam_dirs, opts)
+  end
+
+  def run_beams(beam_dirs, opts \\ []) do
+    all_beams = wildcard_dirs(beam_dirs, "*.beam")
+
+    entry_points = detect_entry_points(beam_dirs) ++ Keyword.get(opts, :extra_entry_points, [])
 
     if entry_points == [] do
       raise "No entry points found"
     end
 
-    call_graph = Treeshake.DialyzerCaller.get_call_graph(beam_dirs)
+    call_graph =
+      Treeshake.DialyzerCaller.get_call_graph(beam_dirs,
+        cache_ref: Keyword.get(opts, :cache_ref),
+        tmp_dir: Keyword.get(opts, :tmp_dir, "/Users/matheksm/treeshake/dialyzer_tmp"),
+        build_base_plt: Keyword.get(opts, :build_base_plt, true)
+      )
 
     reachable = Treeshake.Reachability.find_reachable(call_graph, entry_points)
     stats = Treeshake.BeamRewriter.rewrite(all_beams, reachable, opts)
     {:ok, stats}
   end
 
-  defp detect_entry_points(build_dir) do
-    app_files =
-      build_dir
-      |> Path.join("**/ebin/*.app")
-      |> Path.wildcard()
+  defp detect_entry_points(beam_dirs) do
+    app_files = wildcard_dirs(beam_dirs, "*.app")
 
     Enum.flat_map(app_files, fn app_file ->
       with {:ok, [{:application, _name, attrs}]} <-
@@ -45,5 +52,9 @@ defmodule Treeshake do
     |> Path.join("**/ebin")
     |> Path.wildcard()
     |> Enum.filter(&File.dir?/1)
+  end
+
+  defp wildcard_dirs(dirs, wildcard) do
+    Enum.flat_map(dirs, fn dir -> Path.join(dir, wildcard) |> Path.wildcard() end)
   end
 end

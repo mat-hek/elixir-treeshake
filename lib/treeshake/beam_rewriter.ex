@@ -76,6 +76,7 @@ defmodule Treeshake.BeamRewriter do
 
     empty_stats = %{
       modules_removed: [],
+      beams_removed: [],
       functions_removed: [],
       modules_rewritten: [],
       skipped_no_debug_info: []
@@ -112,7 +113,9 @@ defmodule Treeshake.BeamRewriter do
       File.rm!(beam_path)
     end
 
-    Map.update!(stats, :modules_removed, &[module | &1])
+    stats
+    |> Map.update!(:modules_removed, &[module | &1])
+    |> Map.update!(:beams_removed, &[beam_path | &1])
   end
 
   defp process_live_module(beam_path, module, reachable, stats, opts) do
