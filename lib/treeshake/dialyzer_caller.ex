@@ -78,7 +78,7 @@ defmodule Treeshake.DialyzerCaller do
     case System.cmd(
            "dialyzer",
            args,
-           [stderr_to_stdout: true, into: IO.stream(:stdio, :line)] ++ cmd_args
+           [stderr_to_stdout: true] ++ cmd_args
          ) do
       {_output, code} when code in 0..2 ->
         # 0 = success, 1 = warnings, 2 = unknown functions — all acceptable

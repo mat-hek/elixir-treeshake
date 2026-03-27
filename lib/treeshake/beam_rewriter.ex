@@ -74,6 +74,8 @@ defmodule Treeshake.BeamRewriter do
         end)
       end
 
+    reachable = enrich_with_protocol_impls(all_beams, reachable)
+
     empty_stats = %{
       modules_removed: [],
       beams_removed: [],
@@ -143,20 +145,72 @@ defmodule Treeshake.BeamRewriter do
     end
   end
 
+  # If a protocol module is reachable, all its implementations must be kept too
+  # because protocol dispatch is dynamic and Dialyzer won't capture those edges.
+  defp enrich_with_protocol_impls(all_beams, reachable) do
+    Enum.reduce(all_beams, reachable, fn beam_path, acc ->
+      with {:ok, module, forms} <- get_abstract_code(beam_path),
+           protocol when is_atom(protocol) <- find_impl_protocol(forms),
+           true <- MapSet.member?(acc.modules, protocol) do
+        impl_mfas =
+          forms
+          |> Enum.flat_map(fn
+            {:function, _, name, arity, _} -> [{module, name, arity}]
+            _ -> []
+          end)
+          |> MapSet.new()
+
+        %{acc | mfas: MapSet.union(acc.mfas, impl_mfas), modules: MapSet.put(acc.modules, module)}
+      else
+        _ -> acc
+      end
+    end)
+  end
+
+  defp find_impl_protocol(forms) do
+    Enum.find_value(forms, fn
+      {:function, _, :__impl__, 1, clauses} ->
+        Enum.find_value(clauses, fn
+          {:clause, _, [{:atom, _, :protocol}], [], [{:atom, _, protocol}]} -> protocol
+          _ -> nil
+        end)
+
+      _ ->
+        nil
+    end)
+  end
+
   # Always-protected function signatures: Elixir/Erlang internals that must
   # remain in every module or the VM / compiler will reject the BEAM.
   @protected_fns MapSet.new([{:__info__, 1}, {:module_info, 0}, {:module_info, 1}])
 
   # Returns the list of dead (unreachable) MFAs in a module.
   defp find_dead_functions(beam_path, reachable) do
-    protected = behaviour_callbacks(beam_path)
+    # Protocol modules have tightly-coupled infrastructure (__protocol__/1,
+    # impl_for/1, impl_for!/1, struct_impl_for/1) that cannot be stripped
+    # individually — the module would fail to recompile if any are removed.
+    if protocol_module?(beam_path) do
+      []
+    else
+      protected = behaviour_callbacks(beam_path)
 
-    functions_for(beam_path)
-    |> Enum.reject(fn {_m, f, a} = mfa ->
-      MapSet.member?(reachable.mfas, mfa) or
-        MapSet.member?(@protected_fns, {f, a}) or
-        MapSet.member?(protected, {f, a})
-    end)
+      functions_for(beam_path)
+      |> Enum.reject(fn {_m, f, a} = mfa ->
+        MapSet.member?(reachable.mfas, mfa) or
+          MapSet.member?(@protected_fns, {f, a}) or
+          MapSet.member?(protected, {f, a})
+      end)
+    end
+  end
+
+  defp protocol_module?(beam_path) do
+    case get_abstract_code(beam_path) do
+      {:ok, _module, forms} ->
+        Enum.any?(forms, &match?({:function, _, :__protocol__, 1, _}, &1))
+
+      _ ->
+        false
+    end
   end
 
   # Returns a MapSet of {fun, arity} pairs that are required callbacks of any
