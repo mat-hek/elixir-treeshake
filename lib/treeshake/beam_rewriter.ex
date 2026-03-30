@@ -87,10 +87,14 @@ defmodule Treeshake.BeamRewriter do
     Enum.reduce(all_beams, empty_stats, fn beam_path, stats ->
       module = beam_path |> Path.basename(".beam") |> String.to_atom()
 
-      if MapSet.member?(reachable.modules, module) do
-        process_live_module(beam_path, module, reachable, stats, opts)
+      if module_app(module) in [:erts, :kernel, :stdlib, :logger] do
+        stats
       else
-        remove_dead_module(beam_path, module, stats, opts)
+        if MapSet.member?(reachable.modules, module) do
+          process_live_module(beam_path, module, reachable, stats, opts)
+        else
+          remove_dead_module(beam_path, module, stats, opts)
+        end
       end
     end)
   end
@@ -203,6 +207,13 @@ defmodule Treeshake.BeamRewriter do
     end
   end
 
+  defp module_app(module) do
+    case :application.get_application(module) do
+      {:ok, app} -> app
+      _other -> nil
+    end
+  end
+
   defp protocol_module?(beam_path) do
     case get_abstract_code(beam_path) do
       {:ok, _module, forms} ->
@@ -291,11 +302,12 @@ defmodule Treeshake.BeamRewriter do
   end
 
   defp format_errors(errors) do
-    Enum.flat_map(errors, fn {_file, errs} ->
-      Enum.map(errs, fn {line, mod, desc} ->
-        "line #{line}: #{mod.format_error(desc)}"
-      end)
-    end)
+    IO.inspect(errors, pretty: true)
+    # Enum.flat_map(errors, fn {_file, errs} ->
+    #   Enum.map(errs, fn {line, mod, desc} ->
+    #     "line #{line}: #{mod.format_error(desc)}"
+    #   end)
+    # end)
   end
 
   defp get_abstract_code(beam_path) do

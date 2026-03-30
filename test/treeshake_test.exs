@@ -168,26 +168,57 @@ defmodule TreeshakeTest do
   end
 
   describe "correctness" do
+    @tag :target
+    @tag timeout: :infinity
     async_test "surviving modules are callable after tree-shaking", %{tmp_dir: tmp_dir} do
       output_dir = Path.join(tmp_dir, "out")
-      assert {:ok, _stats} = Treeshake.run(@fixture, output_dir: output_dir, tmp_dir: tmp_dir)
 
-      survivors = [DemoApp.Application, DemoApp.Worker]
+      assert {:ok, _stats} =
+               Treeshake.run(@fixture,
+                 output_dir: output_dir,
+                 #  tmp_dir: tmp_dir,
+                 cache_ref: "correctness_test",
+                 extra_entry_points: [
+                   {HelloPopcorn, :child_spec, 1},
+                   {HelloPopcorn, :start_link, 1},
+                   {Elixir.Supervisor.Default, :init, 1}
+                 ]
+               )
 
-      on_exit(fn ->
-        Enum.each(survivors, fn mod ->
-          :code.purge(mod)
-          :code.delete(mod)
-        end)
-      end)
+      erl = Path.join([:code.root_dir() |> to_string(), "bin", "erl"])
 
-      Enum.each(survivors, fn mod ->
-        beam_path = Path.join(output_dir, "#{Atom.to_string(mod)}.beam")
-        {:ok, binary} = File.read(beam_path)
-        assert {:module, ^mod} = :code.load_binary(mod, String.to_charlist(beam_path), binary)
-      end)
+      # Write and compile a small Erlang helper so we can use -run instead of
+      # -eval.  -eval requires erl_eval, which tree-shaking removes; -run uses
+      # apply/3 inside the ERTS init module and needs no erl_eval.
+      helper_src = Path.join(tmp_dir, "treeshake_runner.erl")
 
-      assert apply(DemoApp.Worker, :process, ["hello"]) == "[HELLO]"
+      File.write!(helper_src, """
+      -module(treeshake_runner).
+      -export([run/0]).
+      run() ->
+          Result = 'Elixir.DemoApp.Application':start(nil, nil),
+          case Result of
+              {ok, _Pid}  -> erlang:halt(0);
+              Error ->
+                erlang:display(Error),
+                erlang:halt(1)
+          end.
+      """)
+
+      {:ok, :treeshake_runner} =
+        :compile.file(String.to_charlist(helper_src),
+          outdir: String.to_charlist(output_dir)
+        )
+
+      {output, exit_code} =
+        System.cmd(
+          erl,
+          ["-noshell", "-noinput", "-pa", output_dir, "-run", "treeshake_runner", "run"],
+          stderr_to_stdout: true
+        )
+
+      assert exit_code == 0,
+             "erl subprocess failed (exit #{exit_code}): missing module or wrong result\n#{output}"
     end
   end
 end

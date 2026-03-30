@@ -1,4 +1,6 @@
 defmodule Treeshake do
+  @built_in_apps [:erts, :kernel, :stdlib, :elixir, :logger]
+
   def run(project_path, opts \\ []) do
     mix_env = "prod"
     path = Path.expand(project_path)
@@ -13,6 +15,11 @@ defmodule Treeshake do
   end
 
   def run_beams(beam_dirs, opts \\ []) do
+    tmp_dir = Keyword.get(opts, :tmp_dir, "/Users/matheksm/treeshake/dialyzer_tmp")
+
+    beam_dirs =
+      beam_dirs ++ if Keyword.get(opts, :copy_stdlibs, true), do: copy_stdlibs(tmp_dir), else: []
+
     all_beams = wildcard_dirs(beam_dirs, "*.beam")
 
     entry_points = detect_entry_points(beam_dirs) ++ Keyword.get(opts, :extra_entry_points, [])
@@ -24,7 +31,7 @@ defmodule Treeshake do
     call_graph =
       Treeshake.DialyzerCaller.get_call_graph(beam_dirs,
         cache_ref: Keyword.get(opts, :cache_ref),
-        tmp_dir: Keyword.get(opts, :tmp_dir, "/Users/matheksm/treeshake/dialyzer_tmp"),
+        tmp_dir: tmp_dir,
         build_base_plt: Keyword.get(opts, :build_base_plt, true)
       )
 
@@ -56,5 +63,16 @@ defmodule Treeshake do
 
   defp wildcard_dirs(dirs, wildcard) do
     Enum.flat_map(dirs, fn dir -> Path.join(dir, wildcard) |> Path.wildcard() end)
+  end
+
+  defp copy_stdlibs(tmp_dir) do
+    stdlibs_dir = Path.join(tmp_dir, "stdlibs")
+    File.mkdir_p!(stdlibs_dir)
+
+    for app <- @built_in_apps do
+      dest = Path.join(stdlibs_dir, "#{app}")
+      File.cp_r!(:code.lib_dir(app, :ebin), dest)
+      dest
+    end
   end
 end
