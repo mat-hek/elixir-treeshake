@@ -173,7 +173,7 @@ defmodule TreeshakeTest do
     async_test "surviving modules are callable after tree-shaking", %{tmp_dir: tmp_dir} do
       output_dir = Path.join(tmp_dir, "out")
 
-      assert {:ok, _stats} =
+      assert {:ok, stats} =
                Treeshake.run(@fixture,
                  output_dir: output_dir,
                  #  tmp_dir: tmp_dir,
@@ -184,6 +184,9 @@ defmodule TreeshakeTest do
                    {Elixir.Supervisor.Default, :init, 1}
                  ]
                )
+
+      dbg(stats.modules_removed, limit: :infinity)
+      dbg(stats.functions_removed, limit: :infinity)
 
       erl = Path.join([:code.root_dir() |> to_string(), "bin", "erl"])
 

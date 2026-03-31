@@ -196,15 +196,82 @@ defmodule Treeshake.BeamRewriter do
     if protocol_module?(beam_path) do
       []
     else
-      protected = behaviour_callbacks(beam_path)
+      {:ok, module, forms} = get_abstract_code(beam_path)
+      protected = behaviour_callbacks_from_forms(forms)
 
-      functions_for(beam_path)
-      |> Enum.reject(fn {_m, f, a} = mfa ->
-        MapSet.member?(reachable.mfas, mfa) or
-          MapSet.member?(@protected_fns, {f, a}) or
-          MapSet.member?(protected, {f, a})
+      # Seed: functions reachable from the inter-module call graph or always kept.
+      initially_live =
+        Enum.flat_map(forms, fn
+          {:function, _, name, arity, _} ->
+            if MapSet.member?(reachable.mfas, {module, name, arity}) or
+                 MapSet.member?(@protected_fns, {name, arity}) or
+                 MapSet.member?(protected, {name, arity}),
+               do: [{name, arity}],
+               else: []
+
+          _ ->
+            []
+        end)
+        |> MapSet.new()
+
+      # Extend to the full intra-module closure: any function called (directly
+      # or transitively) from a live function must also be kept. Dialyzer's
+      # inter-module call graph does not capture these local edges.
+      call_graph = build_local_call_graph(forms)
+      live = compute_intra_module_closure(initially_live, call_graph)
+
+      Enum.flat_map(forms, fn
+        {:function, _, name, arity, _} -> [{module, name, arity}]
+        _ -> []
       end)
+      |> Enum.reject(fn {_m, f, a} -> MapSet.member?(live, {f, a}) end)
     end
+  end
+
+  # Builds a map of {name, arity} => MapSet of {name, arity} local calls.
+  defp build_local_call_graph(forms) do
+    Map.new(Enum.flat_map(forms, fn
+      {:function, _, name, arity, clauses} ->
+        [{{name, arity}, clauses |> collect_local_calls() |> MapSet.new()}]
+      _ ->
+        []
+    end))
+  end
+
+  # Recursively collect all local (non-remote) call targets from abstract code.
+  defp collect_local_calls(forms) when is_list(forms) do
+    Enum.flat_map(forms, &collect_local_calls/1)
+  end
+
+  defp collect_local_calls({:call, _, {:atom, _, name}, args}) do
+    [{name, length(args)}] ++ collect_local_calls(args)
+  end
+
+  # Capture of a local function reference: &foo/1 compiles to {:fun, _, {:function, name, arity}}
+  defp collect_local_calls({:fun, _, {:function, name, arity}}) do
+    [{name, arity}]
+  end
+
+  defp collect_local_calls({:call, _, _fun_or_remote, args}) do
+    collect_local_calls(args)
+  end
+
+  defp collect_local_calls(tuple) when is_tuple(tuple) do
+    tuple |> Tuple.to_list() |> collect_local_calls()
+  end
+
+  defp collect_local_calls(_), do: []
+
+  # Fixed-point expansion: keeps adding functions reachable from the live set.
+  defp compute_intra_module_closure(live, call_graph) do
+    new_live =
+      Enum.reduce(live, live, fn fa, acc ->
+        MapSet.union(acc, Map.get(call_graph, fa, MapSet.new()))
+      end)
+
+    if MapSet.equal?(new_live, live),
+      do: live,
+      else: compute_intra_module_closure(new_live, call_graph)
   end
 
   defp module_app(module) do
@@ -226,9 +293,7 @@ defmodule Treeshake.BeamRewriter do
 
   # Returns a MapSet of {fun, arity} pairs that are required callbacks of any
   # behaviour declared in the module's abstract code.
-  defp behaviour_callbacks(beam_path) do
-    {:ok, _module, forms} = get_abstract_code(beam_path)
-
+  defp behaviour_callbacks_from_forms(forms) do
     forms
     |> Enum.flat_map(fn
       {:attribute, _, :behaviour, b} ->
@@ -266,6 +331,11 @@ defmodule Treeshake.BeamRewriter do
         {:attribute, _line, :spec, {{name, arity}, _spec}} = form ->
           if MapSet.member?(funcs_to_remove, {module, name, arity}), do: [], else: [form]
 
+        # Remove dead functions from -compile({inline, [...]}) to avoid
+        # bad_inline lint errors when the inlined function no longer exists.
+        {:attribute, line, :compile, value} ->
+          [{:attribute, line, :compile, filter_inline(value, module, funcs_to_remove)}]
+
         form ->
           [form]
       end)
@@ -287,15 +357,22 @@ defmodule Treeshake.BeamRewriter do
     end
   end
 
-  # Returns all MFAs defined in the BEAM (prefers abstract_code for private fns).
-  defp functions_for(beam_path) do
-    {:ok, module, forms} = get_abstract_code(beam_path)
+  # Strips removed functions from -compile({inline, [...]}) values.
+  # Handles both `{:inline, [...]}` and `[inline: [...], ...]` forms.
+  defp filter_inline({:inline, inlines}, module, funcs_to_remove) do
+    {:inline, Enum.reject(inlines, fn {f, a} -> MapSet.member?(funcs_to_remove, {module, f, a}) end)}
+  end
 
-    Enum.flat_map(forms, fn
-      {:function, _line, name, arity, _clauses} -> [{module, name, arity}]
-      _other -> []
+  defp filter_inline(opts, module, funcs_to_remove) when is_list(opts) do
+    Enum.map(opts, fn
+      {:inline, inlines} ->
+        {:inline, Enum.reject(inlines, fn {f, a} -> MapSet.member?(funcs_to_remove, {module, f, a}) end)}
+      other ->
+        other
     end)
   end
+
+  defp filter_inline(other, _module, _funcs_to_remove), do: other
 
   defp verbose_log(opts, msg) do
     if Keyword.get(opts, :verbose, false), do: IO.puts(msg)
