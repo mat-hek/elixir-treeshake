@@ -2,45 +2,21 @@ defmodule Treeshake do
   @stdlib_apps [:erts, :kernel, :stdlib, :compiler, :elixir, :logger]
   @non_treeshakable_apps [:erts, :kernel, :stdlib, :logger]
 
-  def run(project_path, opts \\ []) do
-    mix_env = "prod"
-    path = Path.expand(project_path)
-    build_dir = Path.join([path, "_build", mix_env])
-
-    if not File.dir?(build_dir) do
-      raise "Run `MIX_ENV=#{mix_env} mix compile` first. Expected: #{build_dir}"
-    end
-
-    ebin_files = find_ebin_files(build_dir)
-    run_beams(ebin_files, opts)
-  end
-
-  def run_beams(ebin_files, opts \\ []) do
-    default_tmp_dir =
-      "/Users/matheksm/treeshake/dialyzer_tmp"
-      |> Path.join(Keyword.get(opts, :tmp_subdir, random_str()))
-
-    opts = Keyword.put_new(opts, :tmp_dir, default_tmp_dir)
-    tmp_dir = Keyword.fetch!(opts, :tmp_dir)
-    File.mkdir_p!(tmp_dir)
-
-    ebin_files =
-      ebin_files ++ if Keyword.get(opts, :copy_stdlibs, true), do: copy_stdlibs(tmp_dir), else: []
-
-    beams = filter_ext(ebin_files, ".beam")
-
-    app_files = filter_ext(ebin_files, ".app")
-    dbg(app_files)
+  def run(opts \\ []) do
+    opts = parse_opts(opts)
 
     non_treeshakable_modules =
-      Keyword.get(opts, :non_treeshakable_modules, [])
+      Map.get(opts, :non_treeshakable_modules, [])
       |> MapSet.new(&to_string/1)
       |> MapSet.union(non_treeshakable_stdlib_modules())
+
+    beams = filter_ext(opts.ebin_files, ".beam")
 
     treeshakable_beams =
       Enum.reject(beams, fn path -> Path.basename(path, ".beam") in non_treeshakable_modules end)
 
-    entry_points = detect_entry_points(app_files) ++ Keyword.get(opts, :extra_entry_points, [])
+    app_files = filter_ext(opts.ebin_files, ".app")
+    entry_points = detect_entry_points(app_files) ++ Map.get(opts, :extra_entry_points, [])
 
     if entry_points == [] do
       raise "No entry points found"
@@ -50,7 +26,53 @@ defmodule Treeshake do
 
     reachable = Treeshake.Reachability.find_reachable(call_graph, entry_points)
     stats = Treeshake.BeamRewriter.rewrite(treeshakable_beams, reachable, opts)
-    {:ok, stats}
+
+    stats
+  end
+
+  def build_callgraph(opts \\ []) do
+    opts = parse_opts(opts)
+    beams = filter_ext(opts.ebin_files, ".beam")
+    Treeshake.DialyzerCaller.get_call_graph(beams, opts)
+    :ok
+  end
+
+  defp parse_opts(opts) do
+    default_tmp_dir =
+      "/Users/matheksm/treeshake/dialyzer_tmp"
+      |> Path.join(Keyword.get(opts, :tmp_subdir, random_str()))
+
+    opts = Keyword.put_new(opts, :tmp_dir, default_tmp_dir)
+    tmp_dir = Keyword.fetch!(opts, :tmp_dir)
+    File.mkdir_p!(tmp_dir)
+
+    {project, opts} = Keyword.pop(opts, :project)
+
+    project_ebin_files =
+      case project do
+        nil ->
+          []
+
+        project_path ->
+          mix_env = "prod"
+          path = Path.expand(project_path)
+          build_dir = Path.join([path, "_build", mix_env])
+
+          if not File.dir?(build_dir) do
+            raise "Run `MIX_ENV=#{mix_env} mix compile` first. Expected: #{build_dir}"
+          end
+
+          find_ebin_files(build_dir)
+      end
+
+    ebin_files =
+      project_ebin_files ++
+        Keyword.get(opts, :ebin_files, []) ++
+        if Keyword.get(opts, :copy_stdlibs, true), do: copy_stdlibs(tmp_dir), else: []
+
+    opts = Keyword.put(opts, :ebin_files, ebin_files)
+
+    Map.new(opts)
   end
 
   defp detect_entry_points(app_files) do
@@ -77,7 +99,11 @@ defmodule Treeshake do
 
     Enum.flat_map(@stdlib_apps, fn app ->
       dest = Path.join(stdlibs_dir, "#{app}")
-      File.cp_r!(:code.lib_dir(app, :ebin), dest)
+
+      unless File.dir?(dest) do
+        File.cp_r!(:code.lib_dir(app, :ebin), dest)
+      end
+
       Path.wildcard(Path.join(dest, "*"))
     end)
   end

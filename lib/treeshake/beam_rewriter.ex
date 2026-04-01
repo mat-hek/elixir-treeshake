@@ -56,10 +56,10 @@ defmodule Treeshake.BeamRewriter do
   Walk all BEAM files in `project`, remove dead code according to `reachable`,
   and return a statistics map.
   """
-  @spec rewrite(Project.t(), map(), keyword()) :: stats()
-  def rewrite(all_beams, reachable, opts \\ []) do
-    dry_run = Keyword.get(opts, :dry_run, false)
-    output_dir = Keyword.get(opts, :output_dir)
+  @spec rewrite(Project.t(), map(), map()) :: stats()
+  def rewrite(all_beams, reachable, opts \\ %{}) do
+    dry_run = Map.get(opts, :dry_run, false)
+    output_dir = Map.get(opts, :output_dir)
 
     all_beams =
       if dry_run or output_dir == nil do
@@ -105,9 +105,9 @@ defmodule Treeshake.BeamRewriter do
   Requires the file to have been compiled with `debug_info`. Returns `:ok` on
   success or `{:error, reason}` on failure.
   """
-  @spec remove_functions(String.t(), MapSet.t(mfa_tuple()), keyword()) ::
+  @spec remove_functions(String.t(), MapSet.t(mfa_tuple()), map()) ::
           :ok | {:error, term()}
-  def remove_functions(beam_path, funcs_to_remove, opts \\ []) do
+  def remove_functions(beam_path, funcs_to_remove, opts \\ %{}) do
     {:ok, module, forms} = get_abstract_code(beam_path)
     rewrite_via_abstract_code(beam_path, module, forms, funcs_to_remove, opts)
   end
@@ -115,7 +115,7 @@ defmodule Treeshake.BeamRewriter do
   defp remove_dead_module(beam_path, module, stats, opts) do
     verbose_log(opts, "  [-] #{module} (whole module)")
 
-    unless Keyword.get(opts, :dry_run, false) do
+    unless Map.get(opts, :dry_run, false) do
       File.rm!(beam_path)
     end
 
@@ -230,12 +230,15 @@ defmodule Treeshake.BeamRewriter do
 
   # Builds a map of {name, arity} => MapSet of {name, arity} local calls.
   defp build_local_call_graph(forms) do
-    Map.new(Enum.flat_map(forms, fn
-      {:function, _, name, arity, clauses} ->
-        [{{name, arity}, clauses |> collect_local_calls() |> MapSet.new()}]
-      _ ->
-        []
-    end))
+    Map.new(
+      Enum.flat_map(forms, fn
+        {:function, _, name, arity, clauses} ->
+          [{{name, arity}, clauses |> collect_local_calls() |> MapSet.new()}]
+
+        _ ->
+          []
+      end)
+    )
   end
 
   # Recursively collect all local (non-remote) call targets from abstract code.
@@ -312,7 +315,7 @@ defmodule Treeshake.BeamRewriter do
   end
 
   defp rewrite_via_abstract_code(beam_path, module, forms, funcs_to_remove, opts) do
-    dry_run = Keyword.get(opts, :dry_run, false)
+    dry_run = Map.get(opts, :dry_run, false)
 
     new_forms =
       Enum.flat_map(forms, fn
@@ -342,7 +345,7 @@ defmodule Treeshake.BeamRewriter do
 
     compile_opts =
       [:return_errors, :return_warnings] ++
-        if Keyword.get(opts, :keep_debug_info, false), do: [:debug_info], else: []
+        if Map.get(opts, :keep_debug_info, false), do: [:debug_info], else: []
 
     case :compile.forms(new_forms, compile_opts) do
       {:ok, ^module, binary, _warnings} ->
@@ -360,13 +363,16 @@ defmodule Treeshake.BeamRewriter do
   # Strips removed functions from -compile({inline, [...]}) values.
   # Handles both `{:inline, [...]}` and `[inline: [...], ...]` forms.
   defp filter_inline({:inline, inlines}, module, funcs_to_remove) do
-    {:inline, Enum.reject(inlines, fn {f, a} -> MapSet.member?(funcs_to_remove, {module, f, a}) end)}
+    {:inline,
+     Enum.reject(inlines, fn {f, a} -> MapSet.member?(funcs_to_remove, {module, f, a}) end)}
   end
 
   defp filter_inline(opts, module, funcs_to_remove) when is_list(opts) do
     Enum.map(opts, fn
       {:inline, inlines} ->
-        {:inline, Enum.reject(inlines, fn {f, a} -> MapSet.member?(funcs_to_remove, {module, f, a}) end)}
+        {:inline,
+         Enum.reject(inlines, fn {f, a} -> MapSet.member?(funcs_to_remove, {module, f, a}) end)}
+
       other ->
         other
     end)
@@ -375,7 +381,7 @@ defmodule Treeshake.BeamRewriter do
   defp filter_inline(other, _module, _funcs_to_remove), do: other
 
   defp verbose_log(opts, msg) do
-    if Keyword.get(opts, :verbose, false), do: IO.puts(msg)
+    if Map.get(opts, :verbose, false), do: IO.puts(msg)
   end
 
   defp format_errors(errors) do

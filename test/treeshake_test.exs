@@ -6,6 +6,8 @@ defmodule TreeshakeTest do
   @fixture Path.expand("fixtures/demo_app", __DIR__)
 
   @moduletag :tmp_dir
+  @tmp_subdir "treeshake_tests"
+  @copy_stdlibs true
 
   # Compile the fixture project once before any tests in this module run.
   # We target the prod env so the _build layout matches what treeshake expects.
@@ -19,72 +21,60 @@ defmodule TreeshakeTest do
 
     if code != 0, do: flunk("Fixture failed to compile:\n#{output}")
 
+    if @copy_stdlibs do
+      Treeshake.build_callgraph(project: @fixture, tmp_subdir: @tmp_subdir)
+    end
+
     :ok
   end
 
-  describe "module-level removal" do
-    @tag :skip
-    async_test "removes entirely unreachable modules", %{tmp_dir: tmp_dir} do
-      output_dir = Path.join(tmp_dir, "out")
-      assert {:ok, stats} = Treeshake.run(@fixture, output_dir: output_dir, tmp_dir: tmp_dir)
-
-      assert DemoApp.DeadModule in stats.modules_removed
-      assert DemoApp.AnotherDead in stats.modules_removed
-      # The top-level DemoApp scaffold module is also never called
-      assert DemoApp in stats.modules_removed
-    end
-
-    @tag :skip
-    async_test "keeps reachable modules", %{tmp_dir: tmp_dir} do
-      output_dir = Path.join(tmp_dir, "out")
-      assert {:ok, stats} = Treeshake.run(@fixture, output_dir: output_dir, tmp_dir: tmp_dir)
-
-      refute DemoApp.Application in stats.modules_removed
-      refute DemoApp.Worker in stats.modules_removed
-    end
-
-    @tag :skip
-    async_test "deletes BEAM files for dead modules", %{tmp_dir: tmp_dir} do
-      output_dir = Path.join(tmp_dir, "out")
-      assert {:ok, _stats} = Treeshake.run(@fixture, output_dir: output_dir, tmp_dir: tmp_dir)
-
-      refute File.exists?(Path.join(output_dir, "Elixir.DemoApp.DeadModule.beam"))
-      refute File.exists?(Path.join(output_dir, "Elixir.DemoApp.AnotherDead.beam"))
-      refute File.exists?(Path.join(output_dir, "Elixir.DemoApp.beam"))
-    end
-
-    @tag :skip
-    async_test "keeps BEAM files for live modules", %{tmp_dir: tmp_dir} do
-      output_dir = Path.join(tmp_dir, "out")
-      assert {:ok, _stats} = Treeshake.run(@fixture, output_dir: output_dir, tmp_dir: tmp_dir)
-
-      assert File.exists?(Path.join(output_dir, "Elixir.DemoApp.Application.beam"))
-      assert File.exists?(Path.join(output_dir, "Elixir.DemoApp.Worker.beam"))
-    end
-
-    @tag :skip
-    async_test "output contains only the surviving BEAMs", %{tmp_dir: tmp_dir} do
-      output_dir = Path.join(tmp_dir, "out")
-      assert {:ok, _stats} = Treeshake.run(@fixture, output_dir: output_dir, tmp_dir: tmp_dir)
-
-      surviving = output_dir |> File.ls!() |> Enum.sort()
-      assert surviving == ["Elixir.DemoApp.Application.beam", "Elixir.DemoApp.Worker.beam"]
+  defp treeshake(ctx, opts) do
+    if @copy_stdlibs do
+      Treeshake.run([project: @fixture, tmp_subdir: @tmp_subdir] ++ opts)
+    else
+      Treeshake.run(
+        [project: @fixture, copy_stdlibs: false, tmp_dir: ctx.tmp_dir] ++
+          opts
+      )
     end
   end
 
+  async_test "module-level removal", %{tmp_dir: tmp_dir} = ctx do
+    output_dir = Path.join(tmp_dir, "out")
+
+    stats = treeshake(ctx, output_dir: output_dir)
+
+    refute DemoApp.Application in stats.modules_removed
+    refute DemoApp.Worker in stats.modules_removed
+    assert DemoApp.DeadModule in stats.modules_removed
+    assert DemoApp.AnotherDead in stats.modules_removed
+    assert DemoApp in stats.modules_removed
+
+    surviving =
+      output_dir
+      |> File.ls!()
+      |> Enum.flat_map(fn
+        "Elixir.DemoApp." <> app_module -> [app_module]
+        _other -> []
+      end)
+      |> Enum.sort()
+
+    assert ~w|Application.beam Worker.beam| = surviving
+  end
+
   describe "function-level removal" do
-    @tag :skip
-    async_test "removes unused/1 from DemoApp.Worker (non-dead module)", %{tmp_dir: tmp_dir} do
+    async_test "removes unused/1 from DemoApp.Worker (non-dead module)",
+               %{tmp_dir: tmp_dir} = ctx do
       output_dir = Path.join(tmp_dir, "out")
-      assert {:ok, stats} = Treeshake.run(@fixture, output_dir: output_dir, tmp_dir: tmp_dir)
+      stats = treeshake(ctx, output_dir: output_dir)
 
       assert {DemoApp.Worker, :unused, 1} in stats.functions_removed
     end
 
-    @tag :skip
-    async_test "unused/1 is not callable after tree-shaking", %{tmp_dir: tmp_dir} do
+    async_test "unused/1 is not callable after tree-shaking", %{tmp_dir: tmp_dir} = ctx do
       output_dir = Path.join(tmp_dir, "out")
-      assert {:ok, _stats} = Treeshake.run(@fixture, output_dir: output_dir, tmp_dir: tmp_dir)
+
+      treeshake(ctx, output_dir: output_dir)
 
       beam_path = Path.join(output_dir, "Elixir.DemoApp.Worker.beam")
       {:ok, binary} = File.read(beam_path)
@@ -101,42 +91,30 @@ defmodule TreeshakeTest do
     end
   end
 
-  describe "dry run" do
-    @tag :skip
-    async_test "does not write or delete any files", %{tmp_dir: tmp_dir} do
-      output_dir = Path.join(tmp_dir, "out")
-      ebin = Path.join([@fixture, "_build", "prod", "lib", "demo_app", "ebin"])
-      before_files = ebin |> File.ls!() |> Enum.sort()
+  async_test "dry run", %{tmp_dir: tmp_dir} = ctx do
+    output_dir = Path.join(tmp_dir, "out")
+    ebin = Path.join([@fixture, "_build", "prod", "lib", "demo_app", "ebin"])
+    before_files = ebin |> File.ls!() |> Enum.sort()
 
-      assert {:ok, _stats} =
-               Treeshake.run(@fixture, dry_run: true, tmp_dir: tmp_dir, output_dir: output_dir)
+    stats = treeshake(ctx, output_dir: output_dir, dry_run: true)
 
-      # Output directory must be empty
-      refute File.exists?(output_dir)
-      # Original ebin is untouched
-      assert ^before_files = ebin |> File.ls!() |> Enum.sort()
-    end
+    assert DemoApp.DeadModule in stats.modules_removed
+    assert DemoApp.AnotherDead in stats.modules_removed
 
-    @tag :skip
-    async_test "still reports what would be removed", %{tmp_dir: tmp_dir} do
-      assert {:ok, stats} = Treeshake.run(@fixture, dry_run: true, tmp_dir: tmp_dir)
+    refute File.exists?(output_dir)
 
-      assert DemoApp.DeadModule in stats.modules_removed
-      assert DemoApp.AnotherDead in stats.modules_removed
-      assert stats.modules_removed != []
-    end
+    assert before_files == ebin |> File.ls!() |> Enum.sort()
   end
 
   describe "output directory isolation" do
-    @tag :skip
-    async_test "original ebin is not modified when --output is set", %{tmp_dir: tmp_dir} do
+    async_test "original ebin is not modified when --output is set", %{tmp_dir: tmp_dir} = ctx do
       output_dir = Path.join(tmp_dir, "out")
       ebin = Path.join([@fixture, "_build", "prod", "lib", "demo_app", "ebin"])
       before_files = ebin |> File.ls!() |> Enum.sort()
 
-      assert {:ok, _stats} = Treeshake.run(@fixture, output_dir: output_dir, tmp_dir: tmp_dir)
+      treeshake(ctx, output_dir: output_dir)
 
-      assert ^before_files = ebin |> File.ls!() |> Enum.sort()
+      assert before_files == ebin |> File.ls!() |> Enum.sort()
     end
   end
 
@@ -145,8 +123,7 @@ defmodule TreeshakeTest do
     # can control exactly which modules Dialyzer "saw" — isolating the protocol
     # enrichment logic without running a full Dialyzer analysis.
 
-    @tag :skip
-    test "keeps impl when protocol is reachable but impl was not in call graph", _context do
+    async_test "keeps impl when protocol is reachable but impl was not in call graph", _context do
       ebin = Path.join([@fixture, "_build", "prod", "lib", "demo_app", "ebin"])
       all_beams = Path.wildcard(Path.join(ebin, "*.beam"))
 
@@ -157,13 +134,12 @@ defmodule TreeshakeTest do
         modules: MapSet.new([DemoApp.Formatter])
       }
 
-      stats = Treeshake.BeamRewriter.rewrite(all_beams, reachable, dry_run: true)
+      stats = Treeshake.BeamRewriter.rewrite(all_beams, reachable, %{dry_run: true})
 
       refute DemoApp.Formatter.Integer in stats.modules_removed
     end
 
-    @tag :skip
-    test "removes impl when its protocol is not reachable", _context do
+    async_test "removes impl when its protocol is not reachable", _context do
       ebin = Path.join([@fixture, "_build", "prod", "lib", "demo_app", "ebin"])
       all_beams = Path.wildcard(Path.join(ebin, "*.beam"))
 
@@ -173,32 +149,30 @@ defmodule TreeshakeTest do
         modules: MapSet.new()
       }
 
-      stats = Treeshake.BeamRewriter.rewrite(all_beams, reachable, dry_run: true)
+      stats = Treeshake.BeamRewriter.rewrite(all_beams, reachable, %{dry_run: true})
 
       assert DemoApp.Formatter.Integer in stats.modules_removed
     end
   end
 
   describe "correctness" do
-    @tag :target
-    @tag timeout: :infinity
-    async_test "surviving modules are callable after tree-shaking", %{tmp_dir: tmp_dir} do
+    @tag :correctness
+    async_test "surviving modules are callable after tree-shaking", %{tmp_dir: tmp_dir} = ctx do
       output_dir = Path.join(tmp_dir, "out")
 
-      assert {:ok, stats} =
-               Treeshake.run(@fixture,
-                 output_dir: output_dir,
-                 #  tmp_dir: tmp_dir,
-                 tmp_subdir: "correctness_test",
-                 extra_entry_points: [
-                   {HelloPopcorn, :child_spec, 1},
-                   {HelloPopcorn, :start_link, 1},
-                   {Elixir.Supervisor.Default, :init, 1}
-                 ]
-               )
+      stats =
+        treeshake(ctx,
+          output_dir: output_dir,
+          extra_entry_points: [
+            {HelloPopcorn, :child_spec, 1},
+            {HelloPopcorn, :start_link, 1},
+            {Elixir.Supervisor.Default, :init, 1}
+          ]
+        )
 
-      dbg(stats.modules_removed, limit: :infinity)
-      dbg(stats.functions_removed, limit: :infinity)
+      _stats = stats
+      # dbg(stats.modules_removed, limit: :infinity)
+      # dbg(stats.functions_removed, limit: :infinity)
 
       erl = Path.join([:code.root_dir() |> to_string(), "bin", "erl"])
 
@@ -228,7 +202,7 @@ defmodule TreeshakeTest do
       {output, exit_code} =
         System.cmd(
           erl,
-          ["-noshell", "-noinput", "-pa", output_dir, "-run", "treeshake_runner", "run"],
+          ~w|-noshell -noinput -pa #{output_dir} #{unless @copy_stdlibs, do: "#{:code.lib_dir(:elixir, :ebin)}"} -run treeshake_runner run|,
           stderr_to_stdout: true
         )
 

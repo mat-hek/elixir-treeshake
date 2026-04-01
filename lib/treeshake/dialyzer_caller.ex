@@ -2,7 +2,7 @@ defmodule Treeshake.DialyzerCaller do
   # @otp_apps [:erts, :kernel, :stdlib]
 
   def get_call_graph(beams, opts \\ []) do
-    tmp_dir = Keyword.fetch!(opts, :tmp_dir)
+    tmp_dir = opts.tmp_dir
     cache_path = Path.join(tmp_dir, "cache")
 
     cache =
@@ -10,8 +10,8 @@ defmodule Treeshake.DialyzerCaller do
       |> Enum.map_join("\n", fn path -> "#{path} #{File.read!(path) |> :erlang.md5()}" end)
       |> :erlang.md5()
 
-    if not Keyword.get(opts, :cached, false) and
-         (Keyword.get(opts, :force, false) or File.read(cache_path) != {:ok, cache}) do
+    if Map.get(opts, :check_cache, true) and
+         (Map.get(opts, :force, false) or File.read(cache_path) != {:ok, cache}) do
       plt_path = build_plt(beams, tmp_dir)
       build_call_graph(plt_path, beams, tmp_dir)
       File.write!(cache_path, cache)
@@ -65,12 +65,15 @@ defmodule Treeshake.DialyzerCaller do
   end
 
   defp run_dialyzer(args, cmd_args \\ []) do
-    IO.puts("Calling: dialyzer #{Enum.join(args, " ")}")
+    # IO.puts("Calling: dialyzer #{Enum.join(args, " ")}")
 
     case System.cmd(
            "dialyzer",
            args,
-           [stderr_to_stdout: true, into: IO.stream(:stdio, :line)] ++ cmd_args
+           [
+             stderr_to_stdout: true
+             # into: IO.stream(:stdio, :line)
+           ] ++ cmd_args
          ) do
       {_output, code} when code in [0, 2] ->
         # 0 = success, 1 = warnings, 2 = unknown functions — all acceptable
