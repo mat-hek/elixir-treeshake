@@ -1,8 +1,6 @@
 defmodule Treeshake do
-  # BEAMs from these apps are tree-shaken alongside project code and land in output_dir.
-  @rewritable_apps [:elixir, :logger]
-  # Needed for Dialyzer analysis but cannot be safely rewritten (BIFs, no Erlang source).
-  @dialyzer_only_apps [:erts, :kernel, :stdlib]
+  @stdlib_apps [:erts, :kernel, :stdlib, :compiler, :elixir, :logger]
+  @non_treeshakable_apps [:erts, :kernel, :stdlib, :logger]
 
   def run(project_path, opts \\ []) do
     mix_env = "prod"
@@ -13,45 +11,49 @@ defmodule Treeshake do
       raise "Run `MIX_ENV=#{mix_env} mix compile` first. Expected: #{build_dir}"
     end
 
-    beam_dirs = find_beam_dirs(build_dir)
-    run_beams(beam_dirs, opts)
+    ebin_files = find_ebin_files(build_dir)
+    run_beams(ebin_files, opts)
   end
 
-  def run_beams(beam_dirs, opts \\ []) do
-    tmp_dir = Keyword.get(opts, :tmp_dir, "/Users/matheksm/treeshake/dialyzer_tmp")
+  def run_beams(ebin_files, opts \\ []) do
+    default_tmp_dir =
+      "/Users/matheksm/treeshake/dialyzer_tmp"
+      |> Path.join(Keyword.get(opts, :tmp_subdir, random_str()))
 
-    {rewritable_dirs, dialyzer_only_dirs} =
-      if Keyword.get(opts, :copy_stdlibs, true),
-        do: copy_stdlibs(tmp_dir),
-        else: {[], []}
+    opts = Keyword.put_new(opts, :tmp_dir, default_tmp_dir)
+    tmp_dir = Keyword.fetch!(opts, :tmp_dir)
+    File.mkdir_p!(tmp_dir)
 
-    all_beam_dirs = beam_dirs ++ rewritable_dirs ++ dialyzer_only_dirs
+    ebin_files =
+      ebin_files ++ if Keyword.get(opts, :copy_stdlibs, true), do: copy_stdlibs(tmp_dir), else: []
 
-    # Project + Elixir stdlib BEAMs are tree-shaken and land in output_dir.
-    # Raw Erlang OTP BEAMs (erts/kernel/stdlib) are only needed for Dialyzer analysis.
-    rewritable_beams = wildcard_dirs(beam_dirs ++ rewritable_dirs, "*.beam")
+    beams = filter_ext(ebin_files, ".beam")
 
-    entry_points = detect_entry_points(beam_dirs) ++ Keyword.get(opts, :extra_entry_points, [])
+    app_files = filter_ext(ebin_files, ".app")
+    dbg(app_files)
+
+    non_treeshakable_modules =
+      Keyword.get(opts, :non_treeshakable_modules, [])
+      |> MapSet.new(&to_string/1)
+      |> MapSet.union(non_treeshakable_stdlib_modules())
+
+    treeshakable_beams =
+      Enum.reject(beams, fn path -> Path.basename(path, ".beam") in non_treeshakable_modules end)
+
+    entry_points = detect_entry_points(app_files) ++ Keyword.get(opts, :extra_entry_points, [])
 
     if entry_points == [] do
       raise "No entry points found"
     end
 
-    call_graph =
-      Treeshake.DialyzerCaller.get_call_graph(all_beam_dirs,
-        cache_ref: Keyword.get(opts, :cache_ref),
-        tmp_dir: tmp_dir,
-        build_base_plt: Keyword.get(opts, :build_base_plt, true)
-      )
+    call_graph = Treeshake.DialyzerCaller.get_call_graph(beams, opts)
 
     reachable = Treeshake.Reachability.find_reachable(call_graph, entry_points)
-    stats = Treeshake.BeamRewriter.rewrite(rewritable_beams, reachable, opts)
+    stats = Treeshake.BeamRewriter.rewrite(treeshakable_beams, reachable, opts)
     {:ok, stats}
   end
 
-  defp detect_entry_points(beam_dirs) do
-    app_files = wildcard_dirs(beam_dirs, "*.app")
-
+  defp detect_entry_points(app_files) do
     Enum.flat_map(app_files, fn app_file ->
       with {:ok, [{:application, _name, attrs}]} <-
              :file.consult(String.to_charlist(app_file)),
@@ -63,27 +65,38 @@ defmodule Treeshake do
     end)
   end
 
-  defp find_beam_dirs(build_dir) do
+  defp find_ebin_files(build_dir) do
     build_dir
-    |> Path.join("**/ebin")
+    |> Path.join("**/ebin/*")
     |> Path.wildcard()
-    |> Enum.filter(&File.dir?/1)
-  end
-
-  defp wildcard_dirs(dirs, wildcard) do
-    Enum.flat_map(dirs, fn dir -> Path.join(dir, wildcard) |> Path.wildcard() end)
   end
 
   defp copy_stdlibs(tmp_dir) do
     stdlibs_dir = Path.join(tmp_dir, "stdlibs")
     File.mkdir_p!(stdlibs_dir)
 
-    copy = fn app ->
+    Enum.flat_map(@stdlib_apps, fn app ->
       dest = Path.join(stdlibs_dir, "#{app}")
       File.cp_r!(:code.lib_dir(app, :ebin), dest)
-      dest
-    end
+      Path.wildcard(Path.join(dest, "*"))
+    end)
+  end
 
-    {Enum.map(@rewritable_apps, copy), Enum.map(@dialyzer_only_apps, copy)}
+  defp non_treeshakable_stdlib_modules() do
+    @non_treeshakable_apps
+    |> Enum.flat_map(fn app ->
+      Path.wildcard(Path.join(:code.lib_dir(app, :ebin), "*.beam"))
+    end)
+    |> MapSet.new(&Path.basename(&1, ".beam"))
+  end
+
+  defp filter_ext(paths, ext) do
+    Enum.filter(paths, fn path -> Path.extname(path) == ext end)
+  end
+
+  defp random_str() do
+    datetime = DateTime.utc_now() |> DateTime.to_iso8601()
+    random = Enum.random(0..100_000) |> to_string() |> String.pad_leading(6, "0")
+    datetime <> "-" <> random
   end
 end
