@@ -59,7 +59,8 @@ defmodule TreeshakeTest do
       end)
       |> Enum.sort()
 
-    assert ~w|Application.beam Worker.beam| = surviving
+    assert ~w|Application.beam Behaviour.beam BehaviourImpl.beam BehaviourImplDep.beam Worker.beam| =
+             surviving
   end
 
   describe "function-level removal" do
@@ -155,57 +156,65 @@ defmodule TreeshakeTest do
     end
   end
 
-  describe "correctness" do
-    @tag :correctness
-    async_test "surviving modules are callable after tree-shaking", %{tmp_dir: tmp_dir} = ctx do
-      output_dir = Path.join(tmp_dir, "out")
+  @tag :behaviour
+  async_test "behaviour", %{tmp_dir: tmp_dir} = ctx do
+    output_dir = Path.join(tmp_dir, "out")
 
-      stats =
-        treeshake(ctx,
-          output_dir: output_dir,
-          extra_entry_points: [
-            {Elixir.Supervisor.Default, :init, 1}
-          ]
-        )
+    stats = treeshake(ctx, output_dir: output_dir)
+    refute DemoApp.Behaviour in stats.modules_removed
+    refute DemoApp.BehaviourImpl in stats.modules_removed
+    refute DemoApp.BehaviourImplDep in stats.modules_removed
+  end
 
-      _stats = stats
-      # dbg(stats.modules_removed, limit: :infinity)
-      # dbg(stats.functions_removed, limit: :infinity)
+  @tag :correctness
+  async_test "surviving modules are callable after tree-shaking", %{tmp_dir: tmp_dir} = ctx do
+    output_dir = Path.join(tmp_dir, "out")
 
-      erl = Path.join([:code.root_dir() |> to_string(), "bin", "erl"])
+    stats =
+      treeshake(ctx,
+        output_dir: output_dir,
+        extra_entry_points: [
+          {Elixir.Supervisor.Default, :init, 1}
+        ]
+      )
 
-      # Write and compile a small Erlang helper so we can use -run instead of
-      # -eval.  -eval requires erl_eval, which tree-shaking removes; -run uses
-      # apply/3 inside the ERTS init module and needs no erl_eval.
-      helper_src = Path.join(tmp_dir, "treeshake_runner.erl")
+    _stats = stats
+    # dbg(stats.modules_removed, limit: :infinity)
+    # dbg(stats.functions_removed, limit: :infinity)
 
-      File.write!(helper_src, """
-      -module(treeshake_runner).
-      -export([run/0]).
-      run() ->
-          Result = 'Elixir.DemoApp.Application':start(nil, nil),
-          case Result of
-              {ok, _Pid}  -> erlang:halt(0);
-              Error ->
-                erlang:display(Error),
-                erlang:halt(1)
-          end.
-      """)
+    erl = Path.join([:code.root_dir() |> to_string(), "bin", "erl"])
 
-      {:ok, :treeshake_runner} =
-        :compile.file(String.to_charlist(helper_src),
-          outdir: String.to_charlist(output_dir)
-        )
+    # Write and compile a small Erlang helper so we can use -run instead of
+    # -eval.  -eval requires erl_eval, which tree-shaking removes; -run uses
+    # apply/3 inside the ERTS init module and needs no erl_eval.
+    helper_src = Path.join(tmp_dir, "treeshake_runner.erl")
 
-      {output, exit_code} =
-        System.cmd(
-          erl,
-          ~w|-noshell -noinput -pa #{output_dir} #{unless @copy_stdlibs, do: "#{:code.lib_dir(:elixir, :ebin)}"} -run treeshake_runner run|,
-          stderr_to_stdout: true
-        )
+    File.write!(helper_src, """
+    -module(treeshake_runner).
+    -export([run/0]).
+    run() ->
+        Result = 'Elixir.DemoApp.Application':start(nil, nil),
+        case Result of
+            {ok, _Pid}  -> erlang:halt(0);
+            Error ->
+              erlang:display(Error),
+              erlang:halt(1)
+        end.
+    """)
 
-      assert exit_code == 0,
-             "erl subprocess failed (exit #{exit_code}): missing module or wrong result\n#{output}"
-    end
+    {:ok, :treeshake_runner} =
+      :compile.file(String.to_charlist(helper_src),
+        outdir: String.to_charlist(output_dir)
+      )
+
+    {output, exit_code} =
+      System.cmd(
+        erl,
+        ~w|-noshell -noinput -pa #{output_dir} #{unless @copy_stdlibs, do: "#{:code.lib_dir(:elixir, :ebin)}"} -run treeshake_runner run|,
+        stderr_to_stdout: true
+      )
+
+    assert exit_code == 0,
+           "erl subprocess failed (exit #{exit_code}): missing module or wrong result\n#{output}"
   end
 end

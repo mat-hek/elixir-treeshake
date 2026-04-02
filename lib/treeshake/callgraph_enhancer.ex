@@ -22,6 +22,15 @@ defmodule Treeshake.CallgraphEnhancer do
   function whose body contains the atom `M` hardcoded.  This models the fact
   that a supervisor referencing a child module by atom may call its
   `child_spec/1` at runtime.
+
+  ## Behaviour edges
+
+  For every module M in the scanned beams that implements a behaviour,
+  `enhance/2` adds an edge {M1, F1, A1} -> {M, Cb, CbArity} for every
+  function whose body contains the atom `M` hardcoded, and for every callback
+  `{Cb, CbArity}` declared by the implemented behaviour(s).  This models the
+  fact that a caller passing `M` as a module argument may invoke any of its
+  behaviour callbacks via dynamic dispatch.
   """
 
   @type mfa_tuple :: {atom(), atom(), non_neg_integer()}
@@ -34,21 +43,56 @@ defmodule Treeshake.CallgraphEnhancer do
   """
   @spec enhance(graph(), [Path.t()]) :: graph()
   def enhance(call_graph, beam_files) do
-    # First pass: collect all modules that export child_spec/1.
-    child_spec_modules =
-      Enum.reduce(beam_files, MapSet.new(), fn beam_path, acc ->
-        case get_forms(beam_path) do
-          {:ok, module, forms} ->
-            exports = collect_exports(forms)
+    # First pass: collect module metadata needed for edge synthesis.
+    {child_spec_modules, behaviour_callbacks, module_behaviours} =
+      Enum.reduce(
+        beam_files,
+        {MapSet.new(), %{}, %{}},
+        fn beam_path, {cs_acc, cb_acc, beh_acc} ->
+          case get_forms(beam_path) do
+            {:ok, module, forms} ->
+              exports = collect_exports(forms)
 
-            if MapSet.member?(exports, {:child_spec, 1}),
-              do: MapSet.put(acc, module),
-              else: acc
+              cs_acc =
+                if MapSet.member?(exports, {:child_spec, 1}),
+                  do: MapSet.put(cs_acc, module),
+                  else: cs_acc
 
-          _ ->
-            acc
+              # Callbacks defined by this module (it is a behaviour).
+              callbacks =
+                Enum.flat_map(forms, fn
+                  {:attribute, _, :callback, {{name, arity}, _}} -> [{name, arity}]
+                  _ -> []
+                end)
+
+              # Behaviours this module declares it implements.
+              behaviours =
+                Enum.flat_map(forms, fn
+                  {:attribute, _, :behaviour, beh} -> [beh]
+                  _ -> []
+                end)
+
+              cb_acc = if callbacks != [], do: Map.put(cb_acc, module, callbacks), else: cb_acc
+
+              beh_acc =
+                if behaviours != [], do: Map.put(beh_acc, module, behaviours), else: beh_acc
+
+              {cs_acc, cb_acc, beh_acc}
+
+            _ ->
+              {cs_acc, cb_acc, beh_acc}
+          end
         end
+      )
+
+    # Derive: impl_module => [{cb_name, cb_arity}] for all known callbacks.
+    impl_module_callbacks =
+      module_behaviours
+      |> Map.new(fn {impl_mod, behaviours} ->
+        callbacks = Enum.flat_map(behaviours, &Map.get(behaviour_callbacks, &1, []))
+        {impl_mod, callbacks}
       end)
+      |> Map.filter(fn {_mod, cbs} -> cbs != [] end)
 
     # Second pass: collect edges.
     new_edges =
@@ -80,7 +124,16 @@ defmodule Treeshake.CallgraphEnhancer do
                   |> Enum.filter(fn m -> contains_atom?(all_bodies, m) end)
                   |> Enum.map(fn m -> {source, {m, :child_spec, 1}} end)
 
-                mfa_edges ++ child_spec_edges
+                behaviour_edges =
+                  impl_module_callbacks
+                  |> Enum.filter(fn {m, _cbs} -> contains_atom?(all_bodies, m) end)
+                  |> Enum.flat_map(fn {m, cbs} ->
+                    Enum.map(cbs, fn {cb_name, cb_arity} ->
+                      {source, {m, cb_name, cb_arity}}
+                    end)
+                  end)
+
+                mfa_edges ++ child_spec_edges ++ behaviour_edges
 
               _ ->
                 []
