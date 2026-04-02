@@ -52,6 +52,15 @@ defmodule Treeshake.BeamRewriter do
           skipped_no_debug_info: [atom()]
         }
 
+  # Always-protected function signatures: Elixir/Erlang internals that must
+  # remain in every module or the VM / compiler will reject the BEAM.
+  @protected_fns MapSet.new([
+                   {:__info__, 1},
+                   {:module_info, 0},
+                   {:module_info, 1},
+                   {:child_spec, 1}
+                 ])
+
   @doc """
   Walk all BEAM files in `project`, remove dead code according to `reachable`,
   and return a statistics map.
@@ -99,15 +108,7 @@ defmodule Treeshake.BeamRewriter do
     end)
   end
 
-  @doc """
-  Remove a specific set of functions from a BEAM file.
-
-  Requires the file to have been compiled with `debug_info`. Returns `:ok` on
-  success or `{:error, reason}` on failure.
-  """
-  @spec remove_functions(String.t(), MapSet.t(mfa_tuple()), map()) ::
-          :ok | {:error, term()}
-  def remove_functions(beam_path, funcs_to_remove, opts \\ %{}) do
+  defp remove_functions(beam_path, funcs_to_remove, opts) do
     {:ok, module, forms} = get_abstract_code(beam_path)
     rewrite_via_abstract_code(beam_path, module, forms, funcs_to_remove, opts)
   end
@@ -183,10 +184,6 @@ defmodule Treeshake.BeamRewriter do
         nil
     end)
   end
-
-  # Always-protected function signatures: Elixir/Erlang internals that must
-  # remain in every module or the VM / compiler will reject the BEAM.
-  @protected_fns MapSet.new([{:__info__, 1}, {:module_info, 0}, {:module_info, 1}])
 
   # Returns the list of dead (unreachable) MFAs in a module.
   defp find_dead_functions(beam_path, reachable) do

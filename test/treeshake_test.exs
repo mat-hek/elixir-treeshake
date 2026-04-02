@@ -164,7 +164,6 @@ defmodule TreeshakeTest do
         treeshake(ctx,
           output_dir: output_dir,
           extra_entry_points: [
-            {HelloPopcorn, :child_spec, 1},
             {HelloPopcorn, :start_link, 1},
             {Elixir.Supervisor.Default, :init, 1}
           ]
