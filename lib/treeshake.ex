@@ -24,6 +24,8 @@ defmodule Treeshake do
 
     call_graph = Treeshake.DialyzerCaller.get_call_graph(beams, opts)
 
+    call_graph = Treeshake.CallgraphEnhancer.enhance(call_graph, treeshakable_beams)
+
     reachable = Treeshake.Reachability.find_reachable(call_graph, entry_points)
     stats = Treeshake.BeamRewriter.rewrite(treeshakable_beams, reachable, opts)
 

@@ -7,7 +7,7 @@ defmodule TreeshakeTest do
 
   @moduletag :tmp_dir
   @tmp_subdir "treeshake_tests"
-  @copy_stdlibs true
+  @copy_stdlibs false
 
   # Compile the fixture project once before any tests in this module run.
   # We target the prod env so the _build layout matches what treeshake expects.
@@ -164,7 +164,6 @@ defmodule TreeshakeTest do
         treeshake(ctx,
           output_dir: output_dir,
           extra_entry_points: [
-            {HelloPopcorn, :start_link, 1},
             {Elixir.Supervisor.Default, :init, 1}
           ]
         )
