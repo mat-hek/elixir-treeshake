@@ -77,7 +77,7 @@ defmodule Treeshake do
     Map.new(opts)
   end
 
-  defp detect_entry_points(app_files) do
+  def detect_entry_points(app_files) do
     Enum.flat_map(app_files, fn app_file ->
       with {:ok, [{:application, _name, attrs}]} <-
              :file.consult(String.to_charlist(app_file)),

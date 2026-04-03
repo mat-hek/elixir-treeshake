@@ -5,6 +5,7 @@ defmodule Treeshake.Utils.BeamAnalyzer do
   boundaries without tracking private implementation details themselves.
   """
 
+  alias Treeshake.Utils.BFS
   alias Treeshake.Utils.BeamReader
   alias Treeshake.Utils.BeamReader.FunctionInfo
 
@@ -78,11 +79,8 @@ defmodule Treeshake.Utils.BeamAnalyzer do
 
     result = %{module: module, public_functions: expanded_pub, private_functions: expanded_priv}
 
-    if Map.has_key?(module_info, :callbacks) do
-      Map.put(result, :callbacks, module_info.callbacks)
-    else
-      result
-    end
+    result = if Map.has_key?(module_info, :callbacks), do: Map.put(result, :callbacks, module_info.callbacks), else: result
+    if Map.has_key?(module_info, :behaviours), do: Map.put(result, :behaviours, module_info.behaviours), else: result
   end
 
   defp resolve_local({nil, name, arity}, module), do: {module, name, arity}
@@ -90,18 +88,12 @@ defmodule Treeshake.Utils.BeamAnalyzer do
 
   # Returns the MapSet of private function keys transitively reachable from fn_info.
   defp reachable_privates(fn_info, priv_index) do
-    fn_info |> priv_keys_of(priv_index) |> MapSet.to_list() |> reachable_privates(priv_index, MapSet.new())
-  end
+    seeds = priv_keys_of(fn_info, priv_index)
 
-  defp reachable_privates([], _priv_index, visited), do: visited
-
-  defp reachable_privates([key | rest], priv_index, visited) do
-    if MapSet.member?(visited, key) do
-      reachable_privates(rest, priv_index, visited)
-    else
-      new_keys = key |> then(&Map.fetch!(priv_index, &1)) |> priv_keys_of(priv_index) |> MapSet.to_list()
-      reachable_privates(rest ++ new_keys, priv_index, MapSet.put(visited, key))
-    end
+    BFS.traverse(seeds, MapSet.new(), fn key, acc ->
+      neighbors = priv_keys_of(Map.fetch!(priv_index, key), priv_index)
+      {neighbors, MapSet.put(acc, key)}
+    end)
   end
 
   defp priv_keys_of(%FunctionInfo{calls: calls}, priv_index) do

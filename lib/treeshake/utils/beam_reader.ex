@@ -30,7 +30,8 @@ defmodule Treeshake.Utils.BeamReader do
   @type module_info :: %{
           required(:module) => atom(),
           required(:functions) => [FunctionInfo.t()],
-          optional(:callbacks) => [name_arity()]
+          optional(:callbacks) => [name_arity()],
+          optional(:behaviours) => [atom()]
         }
 
   @doc """
@@ -61,15 +62,17 @@ defmodule Treeshake.Utils.BeamReader do
   Returns `{:ok, module_info()}` or `:error`.
   """
   @spec read(Path.t(), (term() -> {:match, term()} | term())) :: {:ok, module_info()} | :error
-  def read(beam_path, filter \\ fn _ -> :ignore end) do
+  def read(beam_path, filter \\ nil) do
     case get_forms(beam_path) do
       {:ok, module, forms} ->
         exports = collect_exports(forms)
         callbacks = collect_callbacks(forms)
+        behaviours = collect_behaviours(forms)
         functions = collect_functions(forms, exports, filter)
 
         info = %{module: module, functions: functions}
         info = if callbacks != [], do: Map.put(info, :callbacks, callbacks), else: info
+        info = if behaviours != [], do: Map.put(info, :behaviours, behaviours), else: info
 
         {:ok, info}
 
@@ -78,9 +81,14 @@ defmodule Treeshake.Utils.BeamReader do
     end
   end
 
+  def read!(beam_path, filter \\ nil) do
+    {:ok, info} = read(beam_path, filter)
+    info
+  end
+
   # ---- private helpers ----
 
-  defp get_forms(beam_path) do
+  def get_forms(beam_path) do
     case :beam_lib.chunks(String.to_charlist(beam_path), [:abstract_code]) do
       {:ok, {module, [{:abstract_code, {:raw_abstract_v1, forms}}]}} ->
         {:ok, module, forms}
@@ -100,6 +108,13 @@ defmodule Treeshake.Utils.BeamReader do
   defp collect_callbacks(forms) do
     Enum.flat_map(forms, fn
       {:attribute, _, :callback, {{name, arity}, _}} -> [{name, arity}]
+      _ -> []
+    end)
+  end
+
+  defp collect_behaviours(forms) do
+    Enum.flat_map(forms, fn
+      {:attribute, _, :behaviour, beh} -> [beh]
       _ -> []
     end)
   end
@@ -207,6 +222,10 @@ defmodule Treeshake.Utils.BeamReader do
   # structurally built; non-literal leaves stay as raw AST nodes), then passed
   # to the filter.  Traversal always continues into children so every sub-term
   # is checked independently.
+
+  defp collect_matching_terms(_forms, nil) do
+    []
+  end
 
   defp collect_matching_terms(forms, filter) when is_list(forms) do
     Enum.flat_map(forms, &collect_matching_terms(&1, filter))
