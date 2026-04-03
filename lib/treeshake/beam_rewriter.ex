@@ -360,6 +360,8 @@ defmodule Treeshake.BeamRewriter do
   # Strips removed functions from -compile({inline, [...]}) values.
   # Handles both `{:inline, [...]}` and `[inline: [...], ...]` forms.
   defp filter_inline({:inline, inlines}, module, funcs_to_remove) do
+    inlines = if is_list(inlines), do: inlines, else: [inlines]
+
     {:inline,
      Enum.reject(inlines, fn {f, a} -> MapSet.member?(funcs_to_remove, {module, f, a}) end)}
   end

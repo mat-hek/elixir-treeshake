@@ -43,14 +43,16 @@ defmodule Treeshake.CallgraphEnhancer do
   """
   @spec enhance(graph(), [Path.t()]) :: graph()
   def enhance(call_graph, beam_files) do
-    # First pass: collect module metadata needed for edge synthesis.
-    {child_spec_modules, behaviour_callbacks, module_behaviours} =
+    # First pass: collect module metadata needed for edge synthesis,
+    # and build a module -> beam_path index for BFS lookups.
+    {child_spec_modules, behaviour_callbacks, module_behaviours, module_to_beam} =
       Enum.reduce(
         beam_files,
-        {MapSet.new(), %{}, %{}},
-        fn beam_path, {cs_acc, cb_acc, beh_acc} ->
+        {MapSet.new(), %{}, %{}, %{}},
+        fn beam_path, {cs_acc, cb_acc, beh_acc, m2b_acc} ->
           case get_forms(beam_path) do
             {:ok, module, forms} ->
+              m2b_acc = Map.put(m2b_acc, module, beam_path)
               exports = collect_exports(forms)
 
               cs_acc =
@@ -77,10 +79,10 @@ defmodule Treeshake.CallgraphEnhancer do
               beh_acc =
                 if behaviours != [], do: Map.put(beh_acc, module, behaviours), else: beh_acc
 
-              {cs_acc, cb_acc, beh_acc}
+              {cs_acc, cb_acc, beh_acc, m2b_acc}
 
             _ ->
-              {cs_acc, cb_acc, beh_acc}
+              {cs_acc, cb_acc, beh_acc, m2b_acc}
           end
         end
       )
@@ -94,64 +96,160 @@ defmodule Treeshake.CallgraphEnhancer do
       end)
       |> Map.filter(fn {_mod, cbs} -> cbs != [] end)
 
-    # Second pass: collect edges.
-    new_edges =
-      Enum.flat_map(beam_files, fn beam_path ->
-        case get_forms(beam_path) do
-          {:ok, module, forms} ->
-            exports = collect_exports(forms)
-            local_cg = build_local_call_graph(forms)
-
-            Enum.flat_map(forms, fn
-              {:function, _, name, arity, clauses} ->
-                source = {module, name, arity}
-                priv_closure = compute_private_closure(name, arity, exports, local_cg)
-
-                # Collect bodies of this function and its private callee closure
-                all_bodies =
-                  [clauses] ++
-                    Enum.map(priv_closure, fn {fn_name, fn_arity} ->
-                      get_function_body(forms, fn_name, fn_arity)
-                    end)
-
-                mfa_edges =
-                  all_bodies
-                  |> collect_mfa_tuples()
-                  |> Enum.map(fn target -> {source, target} end)
-
-                child_spec_edges =
-                  child_spec_modules
-                  |> Enum.filter(fn m -> contains_atom?(all_bodies, m) end)
-                  |> Enum.map(fn m -> {source, {m, :child_spec, 1}} end)
-
-                behaviour_edges =
-                  impl_module_callbacks
-                  |> Enum.filter(fn {m, _cbs} -> contains_atom?(all_bodies, m) end)
-                  |> Enum.flat_map(fn {m, cbs} ->
-                    Enum.map(cbs, fn {cb_name, cb_arity} ->
-                      {source, {m, cb_name, cb_arity}}
-                    end)
-                  end)
-
-                mfa_edges ++ child_spec_edges ++ behaviour_edges
-
-              _ ->
-                []
-            end)
-
-          _ ->
-            []
-        end
+    # Second pass: BFS over accessible modules only.
+    # Seed with every module that already appears in the call graph (source or target).
+    initial_modules =
+      Enum.reduce(call_graph, MapSet.new(), fn {{src_mod, _, _}, targets}, acc ->
+        acc = MapSet.put(acc, src_mod)
+        Enum.reduce(targets, acc, fn {tgt_mod, _, _}, a -> MapSet.put(a, tgt_mod) end)
       end)
 
-    Enum.reduce(new_edges, call_graph, fn {source, target}, cg ->
-      Map.update(cg, source, [target], fn existing ->
-        if target in existing, do: existing, else: [target | existing]
-      end)
-    end)
+    bfs_enhance(
+      initial_modules,
+      MapSet.new(),
+      call_graph,
+      module_to_beam,
+      child_spec_modules,
+      impl_module_callbacks
+    )
   end
 
   # ---- private helpers ----
+
+  # BFS over modules: scan each module's beam for new edges, then follow newly
+  # discovered target modules until no unvisited reachable modules remain.
+  defp bfs_enhance(
+         frontier,
+         visited,
+         call_graph,
+         module_to_beam,
+         child_spec_modules,
+         impl_module_callbacks
+       ) do
+    if MapSet.size(frontier) == 0 do
+      call_graph
+    else
+      {new_call_graph, new_target_modules} =
+        Enum.reduce(frontier, {call_graph, MapSet.new()}, fn module, acc ->
+          scan_module(module, acc, module_to_beam, child_spec_modules, impl_module_callbacks)
+        end)
+
+      new_visited = MapSet.union(visited, frontier)
+
+      next_frontier =
+        new_target_modules
+        |> MapSet.difference(new_visited)
+        |> MapSet.filter(fn m -> Map.has_key?(module_to_beam, m) end)
+
+      bfs_enhance(
+        next_frontier,
+        new_visited,
+        new_call_graph,
+        module_to_beam,
+        child_spec_modules,
+        impl_module_callbacks
+      )
+    end
+  end
+
+  defp scan_module(module, acc, module_to_beam, child_spec_modules, impl_module_callbacks) do
+    IO.puts("Scanning #{module}")
+    module_str = Atom.to_string(module)
+
+    with true <-
+           String.starts_with?(module_str, "elixir") or String.starts_with?(module_str, "Elixir"),
+         false <- module == :elixir_parser,
+         {:ok, beam_path} <- Map.fetch(module_to_beam, module),
+         {:ok, ^module, forms} <- get_forms(beam_path) do
+      exports = collect_exports(forms)
+      local_cg = build_local_call_graph(forms)
+
+      Enum.reduce(forms, acc, fn
+        {:function, _, name, arity, clauses}, {cg, tgts} ->
+          source = {module, name, arity}
+
+          edges =
+            edges_for_function(
+              source,
+              clauses,
+              forms,
+              exports,
+              local_cg,
+              child_spec_modules,
+              impl_module_callbacks
+            )
+
+          new_cg =
+            Enum.reduce(edges, cg, fn {src, tgt}, g ->
+              Map.update(g, src, [tgt], fn existing ->
+                if tgt in existing, do: existing, else: [tgt | existing]
+              end)
+            end)
+
+          new_tgts =
+            Enum.reduce(edges, tgts, fn {_src, {tgt_mod, _, _}}, a ->
+              MapSet.put(a, tgt_mod)
+            end)
+
+          {new_cg, new_tgts}
+
+        _, acc ->
+          acc
+      end)
+    else
+      _ -> acc
+    end
+  end
+
+  defp edges_for_function(
+         source,
+         clauses,
+         forms,
+         exports,
+         local_cg,
+         child_spec_modules,
+         impl_module_callbacks
+       ) do
+    {self_mod, name, arity} = source
+    priv_closure = compute_private_closure(name, arity, exports, local_cg)
+
+    all_bodies =
+      [clauses] ++
+        Enum.map(priv_closure, fn {fn_name, fn_arity} ->
+          get_function_body(forms, fn_name, fn_arity)
+        end)
+
+    mfa_edges =
+      all_bodies
+      |> collect_mfa_tuples()
+      |> Enum.map(fn target -> {source, target} end)
+
+    child_spec_edges =
+      child_spec_modules
+      |> Enum.filter(fn m -> contains_atom?(all_bodies, m) end)
+      |> Enum.map(fn m -> {source, {m, :child_spec, 1}} end)
+
+    # Edges for other modules referenced by atom in this function's body.
+    behaviour_edges =
+      impl_module_callbacks
+      |> Enum.filter(fn {m, _cbs} -> m != self_mod and contains_atom?(all_bodies, m) end)
+      |> Enum.flat_map(fn {m, cbs} ->
+        Enum.map(cbs, fn {cb_name, cb_arity} -> {source, {m, cb_name, cb_arity}} end)
+      end)
+
+    # When this module's own atom appears in the body (e.g. __MODULE__ passed as
+    # a module argument), also add edges to this module's behaviour callbacks.
+    self_behaviour_edges =
+      if contains_atom?(all_bodies, self_mod) do
+        impl_module_callbacks
+        |> Map.get(self_mod, [])
+        |> Enum.map(fn {cb_name, cb_arity} -> {source, {self_mod, cb_name, cb_arity}} end)
+      else
+        []
+      end
+
+    mfa_edges ++ child_spec_edges ++ behaviour_edges ++ self_behaviour_edges
+  end
 
   defp get_forms(beam_path) do
     case :beam_lib.chunks(String.to_charlist(beam_path), [:abstract_code]) do
