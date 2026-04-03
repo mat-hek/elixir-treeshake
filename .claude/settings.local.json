@@ -20,7 +20,8 @@
       "Bash(EBIN=/tmp/demo_app/_build/prod/lib/demo_app/ebin)",
       "Bash(dialyzer --callgraph /tmp/cg_test.dot --plt \"$PLT\" -r \"$EBIN\")",
       "Bash(echo \"exit: $?\")",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Bash(mix run -e ':*)"
     ]
   }
 }

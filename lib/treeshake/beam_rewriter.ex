@@ -66,7 +66,10 @@ defmodule Treeshake.BeamRewriter do
   and return a statistics map.
   """
   @spec rewrite(Project.t(), map(), map()) :: stats()
-  def rewrite(all_beams, reachable, opts \\ %{}) do
+  def rewrite(all_beams, call_graph, opts \\ %{}) do
+    reachable_mfas = call_graph |> Enum.flat_map(fn {k, v} -> [k | v] end) |> MapSet.new()
+    reachable_mods = reachable_mfas |> MapSet.new(fn {m, _f, _a} -> m end)
+    reachable = %{mfas: reachable_mfas, modules: reachable_mods}
     dry_run = Map.get(opts, :dry_run, false)
     output_dir = Map.get(opts, :output_dir)
 

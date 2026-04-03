@@ -22,12 +22,21 @@ defmodule Treeshake do
       raise "No entry points found"
     end
 
-    call_graph = Treeshake.DialyzerCaller.get_call_graph(beams, opts)
+    # call_graph = Treeshake.DialyzerCaller.get_call_graph(beams, opts)
 
-    call_graph = Treeshake.CallgraphEnhancer.enhance(call_graph, treeshakable_beams)
+    # call_graph = Treeshake.CallgraphEnhancer.enhance(call_graph, treeshakable_beams)
 
-    reachable = Treeshake.Reachability.find_reachable(call_graph, entry_points)
-    stats = Treeshake.BeamRewriter.rewrite(treeshakable_beams, reachable, opts)
+    IO.puts("creating call graph")
+    call_graph = Treeshake.Utils.CallGraph.create(beams, entry_points)
+    # reachable = Treeshake.Reachability.find_reachable(call_graph, entry_points)
+    IO.puts("rewriting")
+
+    stats =
+      Treeshake.BeamRewriter.rewrite(
+        treeshakable_beams,
+        call_graph,
+        opts
+      )
 
     stats
   end

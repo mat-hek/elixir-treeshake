@@ -7,7 +7,7 @@ defmodule TreeshakeTest do
 
   @moduletag :tmp_dir
   @tmp_subdir "treeshake_tests"
-  @copy_stdlibs false
+  @copy_stdlibs true
 
   # Compile the fixture project once before any tests in this module run.
   # We target the prod env so the _build layout matches what treeshake expects.
@@ -21,9 +21,9 @@ defmodule TreeshakeTest do
 
     if code != 0, do: flunk("Fixture failed to compile:\n#{output}")
 
-    if @copy_stdlibs do
-      Treeshake.build_callgraph(project: @fixture, tmp_subdir: @tmp_subdir)
-    end
+    # if @copy_stdlibs do
+    #   Treeshake.build_callgraph(project: @fixture, tmp_subdir: @tmp_subdir)
+    # end
 
     :ok
   end

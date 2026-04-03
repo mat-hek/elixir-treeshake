@@ -45,10 +45,12 @@ defmodule Treeshake.Utils.CallGraph do
           _ -> {[], []}
         end
 
-      behaviour_calls =
+      known_potential_modules =
         potential_modules
         |> Enum.filter(&Map.has_key?(module_index, &1))
-        |> Enum.flat_map(fn mod ->
+
+      behaviour_calls =
+        Enum.flat_map(known_potential_modules, fn mod ->
           module_index[mod]
           |> Map.get(:behaviours, [])
           |> Enum.flat_map(fn beh ->
@@ -59,7 +61,16 @@ defmodule Treeshake.Utils.CallGraph do
           end)
         end)
 
-      all_calls = Enum.uniq(calls ++ behaviour_calls)
+      # When a module atom appears as a literal (e.g. passed to Supervisor.start_link),
+      # the supervisor will call child_spec/1 on it at runtime — add that edge explicitly.
+      child_spec_calls =
+        known_potential_modules
+        |> Enum.filter(fn mod ->
+          Map.has_key?(module_index[mod].public_functions, {:child_spec, 1})
+        end)
+        |> Enum.map(fn mod -> {mod, :child_spec, 1} end)
+
+      all_calls = Enum.uniq(calls ++ behaviour_calls ++ child_spec_calls)
       neighbors = Enum.filter(all_calls, &known_public?(module_index, &1))
       {neighbors, Map.put(graph, mfa, all_calls)}
     end)
