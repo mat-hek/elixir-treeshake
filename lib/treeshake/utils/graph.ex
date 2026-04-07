@@ -117,7 +117,6 @@ defmodule Treeshake.Utils.Graph do
 
     case next do
       [] ->
-        IO.inspect(path)
         [Enum.reverse(path)]
 
       ns ->

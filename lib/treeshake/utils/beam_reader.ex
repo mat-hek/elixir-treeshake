@@ -82,8 +82,10 @@ defmodule Treeshake.Utils.BeamReader do
   end
 
   def read!(beam_path, filter \\ nil) do
-    {:ok, info} = read(beam_path, filter)
-    info
+    case read(beam_path, filter) do
+      {:ok, info} -> info
+      :error -> raise "Couldn't read abstract code of #{beam_path}"
+    end
   end
 
   # ---- private helpers ----

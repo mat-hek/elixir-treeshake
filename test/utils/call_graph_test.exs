@@ -1,7 +1,7 @@
-defmodule Treeshake.Utils.CallGraphTest do
+defmodule Treeshake.CallGraphTest do
   use ExUnit.Case, async: true
 
-  alias Treeshake.Utils.CallGraph
+  alias Treeshake.CallGraph
 
   @fixture Path.expand("../fixtures/demo_app", __DIR__)
   @ebin Path.expand("../fixtures/demo_app/_build/prod/lib/demo_app/ebin", __DIR__)
@@ -31,11 +31,6 @@ defmodule Treeshake.Utils.CallGraphTest do
 
     test "no starting points returns empty graph regardless of beam list" do
       assert CallGraph.create(all_beams(), []) == %{}
-    end
-
-    test "unreadable beam path is silently skipped" do
-      graph = CallGraph.create(["/nonexistent/path.beam"], [{:foo, :bar, 0}])
-      assert Map.has_key?(graph, {:foo, :bar, 0})
     end
 
     test "starting point for a module not in any beam gets an empty call list" do

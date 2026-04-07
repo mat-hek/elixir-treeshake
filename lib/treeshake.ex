@@ -1,24 +1,17 @@
 defmodule Treeshake do
   @stdlib_apps [:erts, :kernel, :stdlib, :compiler, :elixir, :logger]
-  @non_treeshakable_apps [:erts, :kernel, :stdlib, :logger]
 
   def run(opts \\ []) do
     opts = parse_opts(opts)
 
-    non_treeshakable_modules =
-      Map.get(opts, :non_treeshakable_modules, [])
-      |> MapSet.new(&to_string/1)
-      |> MapSet.union(non_treeshakable_stdlib_modules())
-
     beams = filter_ext(opts.ebin_files, ".beam")
 
-    treeshakable_beams =
-      Enum.reject(beams, fn path -> Path.basename(path, ".beam") in non_treeshakable_modules end)
-
     call_graph = do_build_call_graph(opts)
+    # dbg(call_graph, limit: :infinity)
+    # dbg(Treeshake.CallGraph.explain(call_graph, Calendar.ISO))
 
     IO.puts("rewriting")
-    stats = Treeshake.BeamRewriter.rewrite(treeshakable_beams, call_graph, opts)
+    stats = Treeshake.Shaker.shake(beams, call_graph, opts)
 
     stats
   end
@@ -39,7 +32,7 @@ defmodule Treeshake do
     end
 
     IO.puts("creating call graph")
-    Treeshake.Utils.CallGraph.create(beams, entry_points)
+    Treeshake.CallGraph.create(beams, entry_points)
   end
 
   defp parse_opts(opts) do
@@ -47,6 +40,7 @@ defmodule Treeshake do
       "/Users/matheksm/treeshake/dialyzer_tmp"
       |> Path.join(Keyword.get(opts, :tmp_subdir, random_str()))
 
+    opts = Keyword.put_new(opts, :dry_run, false)
     opts = Keyword.put_new(opts, :tmp_dir, default_tmp_dir)
     tmp_dir = Keyword.fetch!(opts, :tmp_dir)
     File.mkdir_p!(tmp_dir)
@@ -104,21 +98,10 @@ defmodule Treeshake do
 
     Enum.flat_map(@stdlib_apps, fn app ->
       dest = Path.join(stdlibs_dir, "#{app}")
-
-      unless File.dir?(dest) do
-        File.cp_r!(:code.lib_dir(app, :ebin), dest)
-      end
-
+      File.rm_rf!(dest)
+      File.cp_r!(:code.lib_dir(app, :ebin), dest)
       Path.wildcard(Path.join(dest, "*"))
     end)
-  end
-
-  defp non_treeshakable_stdlib_modules() do
-    @non_treeshakable_apps
-    |> Enum.flat_map(fn app ->
-      Path.wildcard(Path.join(:code.lib_dir(app, :ebin), "*.beam"))
-    end)
-    |> MapSet.new(&Path.basename(&1, ".beam"))
   end
 
   defp filter_ext(paths, ext) do

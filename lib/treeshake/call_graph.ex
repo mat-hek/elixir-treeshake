@@ -1,4 +1,4 @@
-defmodule Treeshake.Utils.CallGraph do
+defmodule Treeshake.CallGraph do
   @moduledoc """
   Builds a call graph from a collection of BEAM files, seeded by a set of
   entry-point MFA tuples.
@@ -99,15 +99,9 @@ defmodule Treeshake.Utils.CallGraph do
   end
 
   defp build_module_index(beam_paths) do
-    Enum.reduce(beam_paths, %{}, fn path, acc ->
-      case BeamReader.read(path) do
-        {:ok, module_info} ->
-          analysis = BeamAnalyzer.analyze(module_info)
-          Map.put(acc, analysis.module, analysis)
-
-        :error ->
-          acc
-      end
+    Map.new(beam_paths, fn path ->
+      analysis = path |> BeamReader.read!() |> BeamAnalyzer.analyze()
+      {analysis.module, analysis}
     end)
   end
 

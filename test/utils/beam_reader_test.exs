@@ -232,7 +232,5 @@ defmodule Treeshake.Utils.BeamReaderTest do
              {Task, :start_link, _args} -> true
              _other -> false
            end)
-
-    dbg(info, limit: :infinity)
   end
 end

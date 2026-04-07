@@ -292,18 +292,4 @@ defmodule Treeshake.Utils.BeamAnalyzerTest do
       assert find_priv(result, :b) == []
     end
   end
-
-  @tag :task
-  test "task" do
-    assert {:ok, info} =
-             Treeshake.Utils.BeamReader.read("test/fixtures/ebin/Elixir.Task.beam", fn
-               {m, f, a} when is_atom(m) and is_atom(f) and (is_integer(a) or is_list(a)) ->
-                 {:match, {m, f, a}}
-
-               _ ->
-                 false
-             end)
-
-    dbg(BeamAnalyzer.analyze(info))
-  end
 end

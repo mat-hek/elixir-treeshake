@@ -6,8 +6,6 @@ defmodule TreeshakeTest do
   @fixture Path.expand("fixtures/demo_app", __DIR__)
 
   @moduletag :tmp_dir
-  @tmp_subdir "treeshake_tests"
-  @copy_stdlibs true
 
   # Compile the fixture project once before any tests in this module run.
   # We target the prod env so the _build layout matches what treeshake expects.
@@ -21,22 +19,11 @@ defmodule TreeshakeTest do
 
     if code != 0, do: flunk("Fixture failed to compile:\n#{output}")
 
-    # if @copy_stdlibs do
-    #   Treeshake.build_callgraph(project: @fixture, tmp_subdir: @tmp_subdir)
-    # end
-
     :ok
   end
 
   defp treeshake(ctx, opts) do
-    if @copy_stdlibs do
-      Treeshake.run([project: @fixture, tmp_subdir: @tmp_subdir] ++ opts)
-    else
-      Treeshake.run(
-        [project: @fixture, copy_stdlibs: false, tmp_dir: ctx.tmp_dir] ++
-          opts
-      )
-    end
+    Treeshake.run([project: @fixture, tmp_dir: ctx.tmp_dir] ++ opts)
   end
 
   async_test "module-level removal", %{tmp_dir: tmp_dir} = ctx do
@@ -119,43 +106,6 @@ defmodule TreeshakeTest do
     end
   end
 
-  describe "protocol implementations" do
-    # These tests call BeamRewriter directly with a crafted reachable set so we
-    # can control exactly which modules Dialyzer "saw" — isolating the protocol
-    # enrichment logic without running a full Dialyzer analysis.
-
-    async_test "keeps impl when protocol is reachable but impl was not in call graph", _context do
-      ebin = Path.join([@fixture, "_build", "prod", "lib", "demo_app", "ebin"])
-      all_beams = Path.wildcard(Path.join(ebin, "*.beam"))
-
-      # Simulate: Dialyzer saw DemoApp.Formatter (protocol) but missed the
-      # dynamic-dispatch edge to DemoApp.Formatter.Integer (implementation).
-      reachable = %{
-        mfas: MapSet.new([{DemoApp.Formatter, :format, 1}]),
-        modules: MapSet.new([DemoApp.Formatter])
-      }
-
-      stats = Treeshake.BeamRewriter.rewrite(all_beams, reachable, %{dry_run: true})
-
-      refute DemoApp.Formatter.Integer in stats.modules_removed
-    end
-
-    async_test "removes impl when its protocol is not reachable", _context do
-      ebin = Path.join([@fixture, "_build", "prod", "lib", "demo_app", "ebin"])
-      all_beams = Path.wildcard(Path.join(ebin, "*.beam"))
-
-      # Protocol itself is not reachable — implementation should be removed too.
-      reachable = %{
-        mfas: MapSet.new(),
-        modules: MapSet.new()
-      }
-
-      stats = Treeshake.BeamRewriter.rewrite(all_beams, reachable, %{dry_run: true})
-
-      assert DemoApp.Formatter.Integer in stats.modules_removed
-    end
-  end
-
   @tag :behaviour
   async_test "behaviour", %{tmp_dir: tmp_dir} = ctx do
     output_dir = Path.join(tmp_dir, "out")
@@ -174,7 +124,8 @@ defmodule TreeshakeTest do
       treeshake(ctx,
         output_dir: output_dir,
         extra_entry_points: [
-          {Elixir.Supervisor.Default, :init, 1}
+          {Elixir.Supervisor.Default, :init, 1},
+          {IO, :inspect, 1}
         ]
       )
 
@@ -210,7 +161,7 @@ defmodule TreeshakeTest do
     {output, exit_code} =
       System.cmd(
         erl,
-        ~w|-noshell -noinput -pa #{output_dir} #{unless @copy_stdlibs, do: "#{:code.lib_dir(:elixir, :ebin)}"} -run treeshake_runner run|,
+        ~w|-noshell -noinput -pa #{output_dir} -run treeshake_runner run|,
         stderr_to_stdout: true
       )
 
