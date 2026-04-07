@@ -125,6 +125,52 @@ defmodule Treeshake.Utils.Graph do
     end
   end
 
+  @doc """
+  Converts an adjacency map to a DOT-format string suitable for Graphviz.
+
+  Each key in `graph` becomes a node, and each edge `{from, to}` becomes a
+  directed arrow. Node labels are derived by calling `to_string/1` on each
+  node, so MFA tuples like `{MyApp.Foo, :bar, 2}` render as
+  `"Elixir.MyApp.Foo.bar/2"`.
+
+  ## Example
+
+      iex> graph = %{{Foo, :a, 0} => [{Bar, :b, 1}], {Bar, :b, 1} => []}
+      iex> Treeshake.Utils.Graph.to_dot(graph)
+      ~s(digraph {\\n  "Foo.a/0" -> "Bar.b/1"\\n  "Bar.b/1"\\n}\\n)
+  """
+  @spec to_dot(%{node => [node]}, keyword()) :: String.t()
+        when node: term()
+  def to_dot(graph, _opts \\ []) do
+    lines =
+      Enum.flat_map(graph, fn {from, tos} ->
+        from_label = node_label(from)
+
+        case tos do
+          [] ->
+            ["  #{inspect(from_label)}"]
+
+          _ ->
+            Enum.map(tos, fn to ->
+              "  #{inspect(from_label)} -> #{inspect(node_label(to))}"
+            end)
+        end
+      end)
+
+    "digraph {\n#{Enum.join(lines, "\n")}\n}\n"
+  end
+
+  defp node_label({m, f, a}) do
+    mod =
+      m
+      |> Atom.to_string()
+      |> String.replace_prefix("Elixir.", "")
+
+    "#{mod}.#{f}/#{a}"
+  end
+
+  defp node_label(node), do: to_string(node)
+
   defp neighbors(graph, node, :down), do: Map.get(graph, node, [])
 
   defp neighbors(graph, node, :up) do
