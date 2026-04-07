@@ -15,6 +15,22 @@ defmodule Treeshake do
     treeshakable_beams =
       Enum.reject(beams, fn path -> Path.basename(path, ".beam") in non_treeshakable_modules end)
 
+    call_graph = do_build_call_graph(opts)
+
+    IO.puts("rewriting")
+    stats = Treeshake.BeamRewriter.rewrite(treeshakable_beams, call_graph, opts)
+
+    stats
+  end
+
+  def build_call_graph(opts \\ []) do
+    opts = parse_opts(opts)
+    do_build_call_graph(opts)
+  end
+
+  defp do_build_call_graph(opts) do
+    beams = filter_ext(opts.ebin_files, ".beam")
+
     app_files = filter_ext(opts.ebin_files, ".app")
     entry_points = detect_entry_points(app_files) ++ Map.get(opts, :extra_entry_points, [])
 
@@ -22,30 +38,8 @@ defmodule Treeshake do
       raise "No entry points found"
     end
 
-    # call_graph = Treeshake.DialyzerCaller.get_call_graph(beams, opts)
-
-    # call_graph = Treeshake.CallgraphEnhancer.enhance(call_graph, treeshakable_beams)
-
     IO.puts("creating call graph")
-    call_graph = Treeshake.Utils.CallGraph.create(beams, entry_points)
-    # reachable = Treeshake.Reachability.find_reachable(call_graph, entry_points)
-    IO.puts("rewriting")
-
-    stats =
-      Treeshake.BeamRewriter.rewrite(
-        treeshakable_beams,
-        call_graph,
-        opts
-      )
-
-    stats
-  end
-
-  def build_callgraph(opts \\ []) do
-    opts = parse_opts(opts)
-    beams = filter_ext(opts.ebin_files, ".beam")
-    Treeshake.DialyzerCaller.get_call_graph(beams, opts)
-    :ok
+    Treeshake.Utils.CallGraph.create(beams, entry_points)
   end
 
   defp parse_opts(opts) do

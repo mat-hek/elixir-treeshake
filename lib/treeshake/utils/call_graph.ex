@@ -12,7 +12,7 @@ defmodule Treeshake.Utils.CallGraph do
   The resulting graph is compatible with `Treeshake.Reachability`.
   """
 
-  alias Treeshake.Utils.BFS
+  alias Treeshake.Utils.Graph
   alias Treeshake.Utils.BeamReader
   alias Treeshake.Utils.BeamAnalyzer
 
@@ -36,7 +36,7 @@ defmodule Treeshake.Utils.CallGraph do
   def create(beam_paths, starting_points) do
     module_index = build_module_index(beam_paths)
 
-    BFS.traverse(starting_points, %{}, fn {m, f, a} = mfa, graph ->
+    Graph.bfs(starting_points, %{}, fn {m, f, a} = mfa, graph ->
       {calls, potential_modules} =
         with %{^m => %{public_functions: pub}} <- module_index,
              %{calls: c, potential_modules: pm} <- Map.get(pub, {f, a}) do
@@ -76,7 +76,27 @@ defmodule Treeshake.Utils.CallGraph do
     end)
   end
 
-  # ---- private ----
+  def explain(graph, mfa, max_len \\ 8)
+
+  def explain(graph, m, max_len) when is_atom(m) do
+    explain(graph, {m, nil, nil}, max_len)
+  end
+
+  def explain(graph, {m, f}, max_len) do
+    explain(graph, {m, f, nil}, max_len)
+  end
+
+  def explain(graph, {m, f, a}, max_len) do
+    starting_points =
+      Enum.flat_map(graph, fn {k, v} ->
+        Enum.filter([k | v], fn {m1, f1, a1} ->
+          m in [m1, nil] and f in [f1, nil] and a in [a1, nil]
+        end)
+      end)
+      |> Enum.uniq()
+
+    Graph.reachable_paths(graph, starting_points, :up, max_len: max_len)
+  end
 
   defp build_module_index(beam_paths) do
     Enum.reduce(beam_paths, %{}, fn path, acc ->

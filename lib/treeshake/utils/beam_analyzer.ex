@@ -5,7 +5,7 @@ defmodule Treeshake.Utils.BeamAnalyzer do
   boundaries without tracking private implementation details themselves.
   """
 
-  alias Treeshake.Utils.BFS
+  alias Treeshake.Utils.Graph
   alias Treeshake.Utils.BeamReader
   alias Treeshake.Utils.BeamReader.FunctionInfo
 
@@ -90,7 +90,7 @@ defmodule Treeshake.Utils.BeamAnalyzer do
   defp reachable_privates(fn_info, priv_index) do
     seeds = priv_keys_of(fn_info, priv_index)
 
-    BFS.traverse(seeds, MapSet.new(), fn key, acc ->
+    Graph.bfs(seeds, MapSet.new(), fn key, acc ->
       neighbors = priv_keys_of(Map.fetch!(priv_index, key), priv_index)
       {neighbors, MapSet.put(acc, key)}
     end)
