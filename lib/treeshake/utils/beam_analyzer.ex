@@ -17,10 +17,14 @@ defmodule Treeshake.Utils.BeamAnalyzer do
   @type name_arity :: {atom(), non_neg_integer()}
 
   @type analysis :: %{
-          required(:module) => atom(),
-          required(:public_functions) => %{name_arity() => PublicFunctionInfo.t()},
-          required(:private_functions) => %{name_arity() => [name_arity()]},
-          optional(:callbacks) => [name_arity()]
+          module: atom(),
+          public_functions: %{name_arity() => PublicFunctionInfo.t()},
+          private_functions: %{name_arity() => [name_arity()]},
+          is_protocol: boolean(),
+          behaviour_callbacks: [name_arity()],
+          behaviour_impls: [atom()],
+          protocol_callbacks: [name_arity()],
+          protocol_impls: [{atom(), atom()}]
         }
 
   @doc """
@@ -33,7 +37,8 @@ defmodule Treeshake.Utils.BeamAnalyzer do
     * `:private_functions` — map from `{name, arity}` to the list of public
       `{name, arity}` pairs that transitively call that private function
 
-  The `:callbacks` key is preserved if present in the input.
+  Always includes `:behaviour_callbacks`, `:behaviour_impls`, `:protocol_callbacks`,
+  and `:protocol_impls`, passed through from the input (empty lists when not applicable).
   """
   @spec analyze(BeamReader.module_info()) :: analysis()
   def analyze(%{module: module, functions: functions} = module_info) do
@@ -77,10 +82,16 @@ defmodule Treeshake.Utils.BeamAnalyzer do
         {{name, arity}, Map.get(priv_caller_map, {name, arity}, [])}
       end)
 
-    result = %{module: module, public_functions: expanded_pub, private_functions: expanded_priv}
-
-    result = if Map.has_key?(module_info, :callbacks), do: Map.put(result, :callbacks, module_info.callbacks), else: result
-    if Map.has_key?(module_info, :behaviours), do: Map.put(result, :behaviours, module_info.behaviours), else: result
+    %{
+      module: module,
+      public_functions: expanded_pub,
+      private_functions: expanded_priv,
+      is_protocol: module_info.is_protocol,
+      behaviour_callbacks: module_info.behaviour_callbacks,
+      behaviour_impls: module_info.behaviour_impls,
+      protocol_callbacks: module_info.protocol_callbacks,
+      protocol_impls: module_info.protocol_impls
+    }
   end
 
   defp resolve_local({nil, name, arity}, module), do: {module, name, arity}

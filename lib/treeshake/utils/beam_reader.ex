@@ -28,10 +28,13 @@ defmodule Treeshake.Utils.BeamReader do
   @type remote_call :: {atom(), atom(), non_neg_integer()}
 
   @type module_info :: %{
-          required(:module) => atom(),
-          required(:functions) => [FunctionInfo.t()],
-          optional(:callbacks) => [name_arity()],
-          optional(:behaviours) => [atom()]
+          module: atom(),
+          functions: [FunctionInfo.t()],
+          is_protocol: boolean(),
+          behaviour_callbacks: [name_arity()],
+          behaviour_impls: [atom()],
+          protocol_impls: [{atom(), atom()}],
+          protocol_callbacks: [name_arity()]
         }
 
   @doc """
@@ -56,8 +59,10 @@ defmodule Treeshake.Utils.BeamReader do
 
   Enumerating a `FunctionInfo` iterates over its `matching_terms`.
 
-  If the module declares any `@callback` attributes the result map also
-  contains a `:callbacks` key with a list of `{name, arity}` pairs.
+  All result maps always contain `:callbacks`, `:behaviours`,
+  `:implemented_protocols`, and `:protocol_callbacks` — each is an empty list
+  when not applicable. `:protocol_callbacks` is non-empty only for `defprotocol`
+  modules; `:implemented_protocols` is non-empty only for `defimpl` modules.
 
   Returns `{:ok, module_info()}` or `:error`.
   """
@@ -68,13 +73,20 @@ defmodule Treeshake.Utils.BeamReader do
         exports = collect_exports(forms)
         callbacks = collect_callbacks(forms)
         behaviours = collect_behaviours(forms)
+        protocol_impls = collect_protocol_impls(forms)
+        is_protocol = protocol_definition?(forms)
         functions = collect_functions(forms, exports, filter)
 
-        info = %{module: module, functions: functions}
-        info = if callbacks != [], do: Map.put(info, :callbacks, callbacks), else: info
-        info = if behaviours != [], do: Map.put(info, :behaviours, behaviours), else: info
-
-        {:ok, info}
+        {:ok,
+         %{
+           module: module,
+           functions: functions,
+           is_protocol: is_protocol,
+           behaviour_callbacks: if(is_protocol, do: [], else: callbacks),
+           behaviour_impls: behaviours,
+           protocol_impls: protocol_impls,
+           protocol_callbacks: if(is_protocol, do: callbacks, else: [])
+         }}
 
       :error ->
         :error
@@ -118,6 +130,33 @@ defmodule Treeshake.Utils.BeamReader do
     Enum.flat_map(forms, fn
       {:attribute, _, :behaviour, beh} -> [beh]
       _ -> []
+    end)
+  end
+
+  # Elixir protocol implementations do not use a :protocol_impl attribute.
+  # Instead, the compiler generates a __impl__/1 function with two clauses:
+  #   def __impl__(:for),      do: ForType
+  #   def __impl__(:protocol), do: ProtocolModule
+  defp protocol_definition?(forms) do
+    Enum.any?(forms, &match?({:function, _, :__protocol__, 1, _}, &1))
+  end
+
+  defp collect_protocol_impls(forms) do
+    case Enum.find(forms, &match?({:function, _, :__impl__, 1, _}, &1)) do
+      {:function, _, :__impl__, 1, clauses} ->
+        protocol = extract_impl_clause(clauses, :protocol)
+        for_type = extract_impl_clause(clauses, :for)
+        if protocol && for_type, do: [{protocol, for_type}], else: []
+
+      nil ->
+        []
+    end
+  end
+
+  defp extract_impl_clause(clauses, key) do
+    Enum.find_value(clauses, fn
+      {:clause, _, [{:atom, _, ^key}], [], [{:atom, _, value}]} -> value
+      _ -> nil
     end)
   end
 

@@ -40,14 +40,29 @@ defmodule Treeshake.Utils.BeamReaderTest do
       assert info.module == DemoApp.Worker
     end
 
-    test "no :callbacks key for a non-behaviour module" do
+    test "is_protocol is false for a plain module" do
       {:ok, info} = BeamReader.read(beam(DemoApp.Worker))
-      refute Map.has_key?(info, :callbacks)
+      assert info.is_protocol == false
     end
 
-    test "no :callbacks key for a behaviour implementor (not itself a behaviour)" do
+    test "is_protocol is true for a defprotocol module" do
+      {:ok, info} = BeamReader.read(beam(DemoApp.Formatter))
+      assert info.is_protocol == true
+    end
+
+    test "is_protocol is false for a defimpl module" do
+      {:ok, info} = BeamReader.read(beam(DemoApp.Formatter.Integer))
+      assert info.is_protocol == false
+    end
+
+    test ":behaviour_callbacks is empty for a non-behaviour module" do
+      {:ok, info} = BeamReader.read(beam(DemoApp.Worker))
+      assert info.behaviour_callbacks == []
+    end
+
+    test ":behaviour_callbacks is empty for a behaviour implementor (not itself a behaviour)" do
       {:ok, info} = BeamReader.read(beam(DemoApp.BehaviourImpl))
-      refute Map.has_key?(info, :callbacks)
+      assert info.behaviour_callbacks == []
     end
   end
 
@@ -127,8 +142,103 @@ defmodule Treeshake.Utils.BeamReaderTest do
     test "behaviour module exposes its callbacks" do
       {:ok, info} = BeamReader.read(beam(DemoApp.Behaviour))
 
-      assert Map.has_key?(info, :callbacks)
-      assert {:hello, 0} in info.callbacks
+      assert {:hello, 0} in info.behaviour_callbacks
+    end
+
+    test "protocol module exposes its callbacks via :protocol_callbacks" do
+      {:ok, info} = BeamReader.read(beam(DemoApp.Formatter))
+
+      assert {:format, 1} in info.protocol_callbacks
+      assert info.behaviour_callbacks == []
+    end
+  end
+
+  describe "read/2 - protocol_callbacks" do
+    test "protocol module has :protocol_callbacks" do
+      {:ok, info} = BeamReader.read(beam(DemoApp.Formatter))
+
+      assert {:format, 1} in info.protocol_callbacks
+    end
+
+    test ":protocol_callbacks and :behaviour_callbacks are mutually exclusive" do
+      {:ok, proto_info} = BeamReader.read(beam(DemoApp.Formatter))
+      {:ok, beh_info} = BeamReader.read(beam(DemoApp.Behaviour))
+
+      assert proto_info.protocol_callbacks != []
+      assert proto_info.behaviour_callbacks == []
+      assert beh_info.behaviour_callbacks != []
+      assert beh_info.protocol_callbacks == []
+    end
+
+    test ":protocol_callbacks is empty for a non-protocol module" do
+      {:ok, info} = BeamReader.read(beam(DemoApp.Worker))
+
+      assert info.protocol_callbacks == []
+    end
+
+    test ":protocol_callbacks is empty for a behaviour module" do
+      {:ok, info} = BeamReader.read(beam(DemoApp.Behaviour))
+
+      assert info.protocol_callbacks == []
+    end
+  end
+
+  describe "read/2 - implemented_protocols" do
+    test "protocol implementation module has :protocol_impls" do
+      {:ok, info} = BeamReader.read(beam(DemoApp.Formatter.Integer))
+      assert {DemoApp.Formatter, Integer} in info.protocol_impls
+    end
+
+    test ":protocol_impls is empty for a non-implementation module" do
+      {:ok, info} = BeamReader.read(beam(DemoApp.Worker))
+      assert info.protocol_impls == []
+    end
+
+    test ":protocol_impls is empty for the protocol definition module itself" do
+      {:ok, info} = BeamReader.read(beam(DemoApp.Formatter))
+      assert info.protocol_impls == []
+    end
+  end
+
+  describe "read/2 - DemoApp.Formatter (protocol definition)" do
+    test "full metadata shape" do
+      {:ok, info} = BeamReader.read(beam(DemoApp.Formatter))
+
+      assert info.module == DemoApp.Formatter
+      assert info.is_protocol == true
+      assert info.protocol_callbacks == [{:format, 1}]
+      assert info.behaviour_callbacks == []
+      assert info.behaviour_impls == []
+      assert info.protocol_impls == []
+    end
+
+    test "format/1 is a public function" do
+      {:ok, info} = BeamReader.read(beam(DemoApp.Formatter))
+      format = find_fun(info.functions, :format, 1)
+
+      assert format != nil
+      assert format.public == true
+    end
+  end
+
+  describe "read/2 - DemoApp.Formatter.Integer (protocol implementation)" do
+    test "full metadata shape" do
+      {:ok, info} = BeamReader.read(beam(DemoApp.Formatter.Integer))
+
+      assert info.module == DemoApp.Formatter.Integer
+      assert info.is_protocol == false
+      assert info.protocol_impls == [{DemoApp.Formatter, Integer}]
+      assert info.behaviour_impls == [DemoApp.Formatter]
+      assert info.protocol_callbacks == []
+      assert info.behaviour_callbacks == []
+    end
+
+    test "format/1 is a public function" do
+      {:ok, info} = BeamReader.read(beam(DemoApp.Formatter.Integer))
+      format = find_fun(info.functions, :format, 1)
+
+      assert format != nil
+      assert format.public == true
     end
   end
 

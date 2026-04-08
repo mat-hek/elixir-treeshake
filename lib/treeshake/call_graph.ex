@@ -51,12 +51,13 @@ defmodule Treeshake.CallGraph do
 
       behaviour_calls =
         Enum.flat_map(known_potential_modules, fn mod ->
-          module_index[mod]
-          |> Map.get(:behaviours, [])
-          |> Enum.flat_map(fn beh ->
+          Enum.flat_map(module_index[mod].behaviour_impls, fn beh ->
             case module_index[beh] do
-              %{callbacks: cbs} -> Enum.map(cbs, fn {cb_f, cb_a} -> {mod, cb_f, cb_a} end)
-              _ -> []
+              %{behaviour_callbacks: cbs} ->
+                Enum.map(cbs, fn {cb_f, cb_a} -> {mod, cb_f, cb_a} end)
+
+              nil ->
+                []
             end
           end)
         end)

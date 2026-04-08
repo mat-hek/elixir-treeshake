@@ -8,8 +8,15 @@ defmodule Treeshake.Utils.BeamAnalyzerTest do
   # ---- helpers ----
 
   defp build_info(functions, opts \\ []) do
-    base = %{module: opts[:module] || :TestModule, functions: functions}
-    if callbacks = opts[:callbacks], do: Map.put(base, :callbacks, callbacks), else: base
+    %{
+      module: opts[:module] || :TestModule,
+      functions: functions,
+      is_protocol: opts[:is_protocol] || false,
+      behaviour_callbacks: opts[:behaviour_callbacks] || [],
+      behaviour_impls: opts[:behaviour_impls] || [],
+      protocol_callbacks: opts[:protocol_callbacks] || [],
+      protocol_impls: opts[:protocol_impls] || []
+    }
   end
 
   defp pub(name, arity, calls \\ [], potential_modules \\ [], matching_terms \\ []) do
@@ -45,6 +52,11 @@ defmodule Treeshake.Utils.BeamAnalyzerTest do
       assert result.module == :MyMod
     end
 
+    test "passes through is_protocol from input" do
+      assert BeamAnalyzer.analyze(build_info([], is_protocol: true)).is_protocol == true
+      assert BeamAnalyzer.analyze(build_info([], is_protocol: false)).is_protocol == false
+    end
+
     test "empty module produces empty maps" do
       result = BeamAnalyzer.analyze(build_info([]))
       assert result.public_functions == %{}
@@ -58,14 +70,14 @@ defmodule Treeshake.Utils.BeamAnalyzerTest do
       assert Map.has_key?(result.private_functions, {:bar, 0})
     end
 
-    test "preserves callbacks key when present" do
-      result = BeamAnalyzer.analyze(build_info([], callbacks: [{:hello, 0}]))
-      assert result.callbacks == [{:hello, 0}]
+    test "passes through behaviour_callbacks from input" do
+      result = BeamAnalyzer.analyze(build_info([], behaviour_callbacks: [{:hello, 0}]))
+      assert result.behaviour_callbacks == [{:hello, 0}]
     end
 
-    test "omits callbacks key when not present" do
+    test "behaviour_callbacks is empty when not in input" do
       result = BeamAnalyzer.analyze(build_info([]))
-      refute Map.has_key?(result, :callbacks)
+      assert result.behaviour_callbacks == []
     end
   end
 
