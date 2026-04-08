@@ -3,20 +3,7 @@ defmodule Treeshake.Utils.BeamRewriterTest do
 
   alias Treeshake.Utils.BeamRewriter
 
-  @fixture Path.expand("../fixtures/demo_app", __DIR__)
-  @ebin Path.expand("../fixtures/demo_app/_build/prod/lib/demo_app/ebin", __DIR__)
-
-  setup_all do
-    {output, code} =
-      System.cmd("mix", ~w(compile --force),
-        cd: @fixture,
-        env: [{"MIX_ENV", "prod"}],
-        stderr_to_stdout: true
-      )
-
-    if code != 0, do: flunk("Fixture failed to compile:\n#{output}")
-    :ok
-  end
+  @ebin "test/fixtures/demo_app/_build/prod/lib/demo_app/ebin"
 
   defp beam(module), do: Path.join(@ebin, "#{module}.beam")
 
@@ -83,12 +70,12 @@ defmodule Treeshake.Utils.BeamRewriterTest do
   describe "keep_funs/2 - multiple functions" do
     test "all listed functions are present" do
       {binary, _} =
-        BeamRewriter.keep_funs(beam("Elixir.DemoApp.Worker"), [
+        BeamRewriter.keep_funs(beam("Elixir.DemoApp.Worker"),
           process: 1,
           unused: 1,
           upcase: 1,
           wrap: 1
-        ])
+        )
 
       funs = abstract_functions(binary)
       assert {:process, 1} in funs
@@ -115,7 +102,7 @@ defmodule Treeshake.Utils.BeamRewriterTest do
   describe "keep_funs/2 - function not present" do
     test "silently ignores names not in the module" do
       {binary, _removed} =
-        BeamRewriter.keep_funs(beam("Elixir.DemoApp.Worker"), [totally_absent: 99])
+        BeamRewriter.keep_funs(beam("Elixir.DemoApp.Worker"), totally_absent: 99)
 
       assert is_binary(binary)
     end
@@ -128,7 +115,7 @@ defmodule Treeshake.Utils.BeamRewriterTest do
   describe "keep_funs/2 - errors" do
     test "raises for a non-existent file" do
       assert_raise RuntimeError, ~r/failed to read BEAM|unexpected error/, fn ->
-        BeamRewriter.keep_funs("/tmp/no_such_file_at_all.beam", [foo: 1])
+        BeamRewriter.keep_funs("/tmp/no_such_file_at_all.beam", foo: 1)
       end
     end
 
@@ -139,13 +126,17 @@ defmodule Treeshake.Utils.BeamRewriterTest do
         {:function, 3, :hello, 0, [{:clause, 3, [], [], [{:atom, 3, :ok}]}]}
       ]
 
-      {:ok, :NoDebugInfoMod, binary, _} = :compile.forms(forms, [:return_errors, :return_warnings])
-      tmp = Path.join(System.tmp_dir!(), "no_debug_info_#{:erlang.unique_integer([:positive])}.beam")
+      {:ok, :NoDebugInfoMod, binary, _} =
+        :compile.forms(forms, [:return_errors, :return_warnings])
+
+      tmp =
+        Path.join(System.tmp_dir!(), "no_debug_info_#{:erlang.unique_integer([:positive])}.beam")
+
       File.write!(tmp, binary)
       on_exit(fn -> File.rm(tmp) end)
 
       assert_raise RuntimeError, ~r/no abstract code/, fn ->
-        BeamRewriter.keep_funs(tmp, [hello: 0])
+        BeamRewriter.keep_funs(tmp, hello: 0)
       end
     end
   end

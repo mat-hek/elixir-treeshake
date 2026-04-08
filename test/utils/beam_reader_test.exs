@@ -3,24 +3,7 @@ defmodule Treeshake.Utils.BeamReaderTest do
 
   alias Treeshake.Utils.BeamReader
 
-  @fixture Path.expand("../fixtures/demo_app", __DIR__)
-  @ebin Path.expand("../fixtures/demo_app/_build/prod/lib/demo_app/ebin", __DIR__)
-
-  setup_all do
-    {output, code} =
-      System.cmd("mix", ~w(compile --force),
-        cd: @fixture,
-        env: [{"MIX_ENV", "prod"}],
-        stderr_to_stdout: true
-      )
-
-    if code != 0, do: flunk("Fixture failed to compile:\n#{output}")
-
-    File.mkdir_p!("test/fixtures/ebin")
-    File.cp!(List.to_string(:code.which(Task)), "test/fixtures/ebin/Elixir.Task.beam")
-
-    :ok
-  end
+  @ebin "test/fixtures/demo_app/_build/prod/lib/demo_app/ebin"
 
   defp beam(module), do: Path.join(@ebin, "#{module}.beam")
 

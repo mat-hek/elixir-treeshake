@@ -3,20 +3,7 @@ defmodule Treeshake.CallGraphTest do
 
   alias Treeshake.CallGraph
 
-  @fixture Path.expand("../fixtures/demo_app", __DIR__)
-  @ebin Path.expand("../fixtures/demo_app/_build/prod/lib/demo_app/ebin", __DIR__)
-
-  setup_all do
-    {output, code} =
-      System.cmd("mix", ~w(compile --force),
-        cd: @fixture,
-        env: [{"MIX_ENV", "prod"}],
-        stderr_to_stdout: true
-      )
-
-    if code != 0, do: flunk("Fixture failed to compile:\n#{output}")
-    :ok
-  end
+  @ebin "test/fixtures/demo_app/_build/prod/lib/demo_app/ebin"
 
   defp beam(module), do: Path.join(@ebin, "#{module}.beam")
 

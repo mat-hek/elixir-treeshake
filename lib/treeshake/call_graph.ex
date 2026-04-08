@@ -45,34 +45,37 @@ defmodule Treeshake.CallGraph do
           _ -> {[], []}
         end
 
-      known_potential_modules =
-        potential_modules
-        |> Enum.filter(&Map.has_key?(module_index, &1))
+      referenced_modules_info =
+        Enum.flat_map(
+          potential_modules,
+          &case module_index[&1] do
+            nil -> []
+            info -> [info]
+          end
+        )
 
       behaviour_calls =
-        Enum.flat_map(known_potential_modules, fn mod ->
-          Enum.flat_map(module_index[mod].behaviour_impls, fn beh ->
-            case module_index[beh] do
-              %{behaviour_callbacks: cbs} ->
-                Enum.map(cbs, fn {cb_f, cb_a} -> {mod, cb_f, cb_a} end)
+        referenced_modules_info
+        |> Enum.flat_map(fn info -> Enum.map(info.behaviour_impls, &{info.module, &1}) end)
+        |> Enum.flat_map(fn {module, behaviour} ->
+          case module_index[behaviour] do
+            %{behaviour_callbacks: cbs} ->
+              Enum.map(cbs, fn {cb_f, cb_a} -> {module, cb_f, cb_a} end)
 
-              nil ->
-                []
-            end
-          end)
+            nil ->
+              []
+          end
         end)
 
       # When a module atom appears as a literal (e.g. passed to Supervisor.start_link),
       # the supervisor will call child_spec/1 on it at runtime — add that edge explicitly.
       child_spec_calls =
-        known_potential_modules
-        |> Enum.filter(fn mod ->
-          Map.has_key?(module_index[mod].public_functions, {:child_spec, 1})
-        end)
-        |> Enum.map(fn mod -> {mod, :child_spec, 1} end)
+        referenced_modules_info
+        |> Enum.filter(fn info -> Map.has_key?(info.public_functions, {:child_spec, 1}) end)
+        |> Enum.map(fn info -> {info.module, :child_spec, 1} end)
 
       all_calls = Enum.uniq(calls ++ behaviour_calls ++ child_spec_calls)
-      neighbors = Enum.filter(all_calls, &known_public?(module_index, &1))
+      neighbors = Enum.filter(all_calls, fn {m, _f, _a} -> Map.has_key?(module_index, m) end)
       {neighbors, Map.put(graph, mfa, all_calls)}
     end)
   end
@@ -104,12 +107,5 @@ defmodule Treeshake.CallGraph do
       analysis = path |> BeamReader.read!() |> BeamAnalyzer.analyze()
       {analysis.module, analysis}
     end)
-  end
-
-  defp known_public?(module_index, {module, name, arity}) do
-    case Map.get(module_index, module) do
-      %{public_functions: pub} -> Map.has_key?(pub, {name, arity})
-      nil -> false
-    end
   end
 end

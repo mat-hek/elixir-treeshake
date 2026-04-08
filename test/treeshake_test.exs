@@ -7,21 +7,6 @@ defmodule TreeshakeTest do
 
   @moduletag :tmp_dir
 
-  # Compile the fixture project once before any tests in this module run.
-  # We target the prod env so the _build layout matches what treeshake expects.
-  setup_all do
-    {output, code} =
-      System.cmd("mix", ~w(compile --force),
-        cd: @fixture,
-        env: [{"MIX_ENV", "prod"}],
-        stderr_to_stdout: true
-      )
-
-    if code != 0, do: flunk("Fixture failed to compile:\n#{output}")
-
-    :ok
-  end
-
   defp treeshake(ctx, opts) do
     Treeshake.run([project: @fixture, tmp_dir: ctx.tmp_dir] ++ opts)
   end
