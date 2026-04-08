@@ -56,15 +56,16 @@ defmodule Treeshake.CallGraph do
 
       behaviour_calls =
         referenced_modules_info
-        |> Enum.flat_map(fn info -> Enum.map(info.behaviour_impls, &{info.module, &1}) end)
-        |> Enum.flat_map(fn {module, behaviour} ->
-          case module_index[behaviour] do
-            %{behaviour_callbacks: cbs} ->
-              Enum.map(cbs, fn {cb_f, cb_a} -> {module, cb_f, cb_a} end)
-
-            nil ->
-              []
+        |> Enum.flat_map(fn info ->
+          Enum.map(info.behaviour_impls ++ Keyword.keys(info.protocol_impls), &{info.module, &1})
+        end)
+        |> Enum.flat_map(fn {module, abstraction} ->
+          case module_index[abstraction] do
+            %{abstraction: {_type, callbacks}} -> callbacks
+            nil -> raise "Protocol or behaviour #{abstraction} not found"
+            _info -> raise "Expected #{abstraction} to be a protocol or behaviour, but it's not"
           end
+          |> Enum.map(fn {f, a} -> {module, f, a} end)
         end)
 
       # When a module atom appears as a literal (e.g. passed to Supervisor.start_link),
@@ -75,8 +76,7 @@ defmodule Treeshake.CallGraph do
         |> Enum.map(fn info -> {info.module, :child_spec, 1} end)
 
       all_calls = Enum.uniq(calls ++ behaviour_calls ++ child_spec_calls)
-      neighbors = Enum.filter(all_calls, fn {m, _f, _a} -> Map.has_key?(module_index, m) end)
-      {neighbors, Map.put(graph, mfa, all_calls)}
+      {all_calls, Map.put(graph, mfa, all_calls)}
     end)
   end
 

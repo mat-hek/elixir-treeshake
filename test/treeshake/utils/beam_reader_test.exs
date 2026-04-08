@@ -23,29 +23,24 @@ defmodule Treeshake.Utils.BeamReaderTest do
       assert info.module == DemoApp.Worker
     end
 
-    test "is_protocol is false for a plain module" do
+    test "abstraction is nil for a plain module" do
       {:ok, info} = BeamReader.read(beam(DemoApp.Worker))
-      assert info.is_protocol == false
+      assert info.abstraction == nil
     end
 
-    test "is_protocol is true for a defprotocol module" do
+    test "abstraction is {:protocol, callbacks} for a defprotocol module" do
       {:ok, info} = BeamReader.read(beam(DemoApp.Formatter))
-      assert info.is_protocol == true
+      assert match?({:protocol, _}, info.abstraction)
     end
 
-    test "is_protocol is false for a defimpl module" do
+    test "abstraction is nil for a defimpl module" do
       {:ok, info} = BeamReader.read(beam(DemoApp.Formatter.Integer))
-      assert info.is_protocol == false
+      assert info.abstraction == nil
     end
 
-    test ":behaviour_callbacks is empty for a non-behaviour module" do
-      {:ok, info} = BeamReader.read(beam(DemoApp.Worker))
-      assert info.behaviour_callbacks == []
-    end
-
-    test ":behaviour_callbacks is empty for a behaviour implementor (not itself a behaviour)" do
+    test "abstraction is nil for a behaviour implementor (not itself a behaviour)" do
       {:ok, info} = BeamReader.read(beam(DemoApp.BehaviourImpl))
-      assert info.behaviour_callbacks == []
+      assert info.abstraction == nil
     end
   end
 
@@ -121,48 +116,33 @@ defmodule Treeshake.Utils.BeamReaderTest do
     end
   end
 
-  describe "read/2 - callbacks" do
-    test "behaviour module exposes its callbacks" do
+  describe "read/2 - abstraction" do
+    test "behaviour module has {:behaviour, callbacks}" do
       {:ok, info} = BeamReader.read(beam(DemoApp.Behaviour))
 
-      assert {:hello, 0} in info.behaviour_callbacks
+      assert {:behaviour, cbs} = info.abstraction
+      assert {:hello, 0} in cbs
     end
 
-    test "protocol module exposes its callbacks via :protocol_callbacks" do
+    test "protocol module has {:protocol, callbacks}" do
       {:ok, info} = BeamReader.read(beam(DemoApp.Formatter))
 
-      assert {:format, 1} in info.protocol_callbacks
-      assert info.behaviour_callbacks == []
-    end
-  end
-
-  describe "read/2 - protocol_callbacks" do
-    test "protocol module has :protocol_callbacks" do
-      {:ok, info} = BeamReader.read(beam(DemoApp.Formatter))
-
-      assert {:format, 1} in info.protocol_callbacks
+      assert {:protocol, cbs} = info.abstraction
+      assert {:format, 1} in cbs
     end
 
-    test ":protocol_callbacks and :behaviour_callbacks are mutually exclusive" do
+    test "protocol and behaviour abstractions are distinct tags" do
       {:ok, proto_info} = BeamReader.read(beam(DemoApp.Formatter))
       {:ok, beh_info} = BeamReader.read(beam(DemoApp.Behaviour))
 
-      assert proto_info.protocol_callbacks != []
-      assert proto_info.behaviour_callbacks == []
-      assert beh_info.behaviour_callbacks != []
-      assert beh_info.protocol_callbacks == []
+      assert match?({:protocol, _}, proto_info.abstraction)
+      assert match?({:behaviour, _}, beh_info.abstraction)
     end
 
-    test ":protocol_callbacks is empty for a non-protocol module" do
+    test "plain module has nil abstraction" do
       {:ok, info} = BeamReader.read(beam(DemoApp.Worker))
 
-      assert info.protocol_callbacks == []
-    end
-
-    test ":protocol_callbacks is empty for a behaviour module" do
-      {:ok, info} = BeamReader.read(beam(DemoApp.Behaviour))
-
-      assert info.protocol_callbacks == []
+      assert info.abstraction == nil
     end
   end
 
@@ -188,9 +168,7 @@ defmodule Treeshake.Utils.BeamReaderTest do
       {:ok, info} = BeamReader.read(beam(DemoApp.Formatter))
 
       assert info.module == DemoApp.Formatter
-      assert info.is_protocol == true
-      assert info.protocol_callbacks == [{:format, 1}]
-      assert info.behaviour_callbacks == []
+      assert info.abstraction == {:protocol, [{:format, 1}]}
       assert info.behaviour_impls == []
       assert info.protocol_impls == []
     end
@@ -209,11 +187,9 @@ defmodule Treeshake.Utils.BeamReaderTest do
       {:ok, info} = BeamReader.read(beam(DemoApp.Formatter.Integer))
 
       assert info.module == DemoApp.Formatter.Integer
-      assert info.is_protocol == false
+      assert info.abstraction == nil
       assert info.protocol_impls == [{DemoApp.Formatter, Integer}]
       assert info.behaviour_impls == [DemoApp.Formatter]
-      assert info.protocol_callbacks == []
-      assert info.behaviour_callbacks == []
     end
 
     test "format/1 is a public function" do

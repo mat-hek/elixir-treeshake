@@ -30,11 +30,9 @@ defmodule Treeshake.Utils.BeamReader do
   @type module_info :: %{
           module: atom(),
           functions: [FunctionInfo.t()],
-          is_protocol: boolean(),
-          behaviour_callbacks: [name_arity()],
+          abstraction: {:behaviour | :protocol, [name_arity()]} | nil,
           behaviour_impls: [atom()],
-          protocol_impls: [{atom(), atom()}],
-          protocol_callbacks: [name_arity()]
+          protocol_impls: [{atom(), atom()}]
         }
 
   @doc """
@@ -59,10 +57,9 @@ defmodule Treeshake.Utils.BeamReader do
 
   Enumerating a `FunctionInfo` iterates over its `matching_terms`.
 
-  All result maps always contain `:callbacks`, `:behaviours`,
-  `:implemented_protocols`, and `:protocol_callbacks` — each is an empty list
-  when not applicable. `:protocol_callbacks` is non-empty only for `defprotocol`
-  modules; `:implemented_protocols` is non-empty only for `defimpl` modules.
+  `:abstraction` is `{:protocol, callbacks}` for `defprotocol` modules,
+  `{:behaviour, callbacks}` for behaviour definitions, and `nil` otherwise.
+  `:protocol_impls` is non-empty only for `defimpl` modules.
 
   Returns `{:ok, module_info()}` or `:error`.
   """
@@ -77,15 +74,20 @@ defmodule Treeshake.Utils.BeamReader do
         is_protocol = protocol_definition?(forms)
         functions = collect_functions(forms, exports, filter)
 
+        abstraction =
+          cond do
+            is_protocol -> {:protocol, callbacks}
+            callbacks != [] -> {:behaviour, callbacks}
+            true -> nil
+          end
+
         {:ok,
          %{
            module: module,
            functions: functions,
-           is_protocol: is_protocol,
-           behaviour_callbacks: if(is_protocol, do: [], else: callbacks),
+           abstraction: abstraction,
            behaviour_impls: behaviours,
-           protocol_impls: protocol_impls,
-           protocol_callbacks: if(is_protocol, do: callbacks, else: [])
+           protocol_impls: protocol_impls
          }}
 
       :error ->

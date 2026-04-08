@@ -11,10 +11,8 @@ defmodule Treeshake.Utils.BeamAnalyzerTest do
     %{
       module: opts[:module] || :TestModule,
       functions: functions,
-      is_protocol: opts[:is_protocol] || false,
-      behaviour_callbacks: opts[:behaviour_callbacks] || [],
+      abstraction: opts[:abstraction],
       behaviour_impls: opts[:behaviour_impls] || [],
-      protocol_callbacks: opts[:protocol_callbacks] || [],
       protocol_impls: opts[:protocol_impls] || []
     }
   end
@@ -52,9 +50,14 @@ defmodule Treeshake.Utils.BeamAnalyzerTest do
       assert result.module == :MyMod
     end
 
-    test "passes through is_protocol from input" do
-      assert BeamAnalyzer.analyze(build_info([], is_protocol: true)).is_protocol == true
-      assert BeamAnalyzer.analyze(build_info([], is_protocol: false)).is_protocol == false
+    test "passes through abstraction from input" do
+      assert BeamAnalyzer.analyze(build_info([], abstraction: {:protocol, []})).abstraction ==
+               {:protocol, []}
+
+      assert BeamAnalyzer.analyze(build_info([], abstraction: {:behaviour, [foo: 0]})).abstraction ==
+               {:behaviour, [foo: 0]}
+
+      assert BeamAnalyzer.analyze(build_info([])).abstraction == nil
     end
 
     test "empty module produces empty maps" do
@@ -70,15 +73,6 @@ defmodule Treeshake.Utils.BeamAnalyzerTest do
       assert Map.has_key?(result.private_functions, {:bar, 0})
     end
 
-    test "passes through behaviour_callbacks from input" do
-      result = BeamAnalyzer.analyze(build_info([], behaviour_callbacks: [{:hello, 0}]))
-      assert result.behaviour_callbacks == [{:hello, 0}]
-    end
-
-    test "behaviour_callbacks is empty when not in input" do
-      result = BeamAnalyzer.analyze(build_info([]))
-      assert result.behaviour_callbacks == []
-    end
   end
 
   describe "analyze/1 - public function call expansion" do

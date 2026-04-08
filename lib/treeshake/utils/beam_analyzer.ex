@@ -20,10 +20,8 @@ defmodule Treeshake.Utils.BeamAnalyzer do
           module: atom(),
           public_functions: %{name_arity() => PublicFunctionInfo.t()},
           private_functions: %{name_arity() => [name_arity()]},
-          is_protocol: boolean(),
-          behaviour_callbacks: [name_arity()],
+          abstraction: {:behaviour | :protocol, [name_arity()]} | nil,
           behaviour_impls: [atom()],
-          protocol_callbacks: [name_arity()],
           protocol_impls: [{atom(), atom()}]
         }
 
@@ -37,8 +35,8 @@ defmodule Treeshake.Utils.BeamAnalyzer do
     * `:private_functions` — map from `{name, arity}` to the list of public
       `{name, arity}` pairs that transitively call that private function
 
-  Always includes `:behaviour_callbacks`, `:behaviour_impls`, `:protocol_callbacks`,
-  and `:protocol_impls`, passed through from the input (empty lists when not applicable).
+  Always includes `:abstraction`, `:behaviour_impls`, and `:protocol_impls`,
+  passed through from the input.
   """
   @spec analyze(BeamReader.module_info()) :: analysis()
   def analyze(%{module: module, functions: functions} = module_info) do
@@ -86,10 +84,8 @@ defmodule Treeshake.Utils.BeamAnalyzer do
       module: module,
       public_functions: expanded_pub,
       private_functions: expanded_priv,
-      is_protocol: module_info.is_protocol,
-      behaviour_callbacks: module_info.behaviour_callbacks,
+      abstraction: module_info.abstraction,
       behaviour_impls: module_info.behaviour_impls,
-      protocol_callbacks: module_info.protocol_callbacks,
       protocol_impls: module_info.protocol_impls
     }
   end

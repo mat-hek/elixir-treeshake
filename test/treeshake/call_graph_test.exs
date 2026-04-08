@@ -4,10 +4,16 @@ defmodule Treeshake.CallGraphTest do
   alias Treeshake.CallGraph
 
   @ebin "test/fixtures/demo_app/_build/prod/lib/demo_app/ebin"
+  @stdlib_apps [:erts, :kernel, :stdlib, :compiler, :elixir, :logger]
 
   defp beam(module), do: Path.join(@ebin, "#{module}.beam")
 
-  defp all_beams, do: Path.wildcard(Path.join(@ebin, "*.beam"))
+  defp all_beams,
+    do:
+      Path.wildcard(Path.join(@ebin, "*.beam")) ++
+        Enum.flat_map(@stdlib_apps, fn app ->
+          app |> :code.lib_dir(:ebin) |> Path.join("*.beam") |> Path.wildcard()
+        end)
 
   # ---- empty / error cases ----
 
@@ -74,13 +80,6 @@ defmodule Treeshake.CallGraphTest do
       graph = CallGraph.create([beam(DemoApp.Worker)], [{DemoApp.Worker, :process, 1}])
       calls = graph[{DemoApp.Worker, :process, 1}]
       assert {String, :upcase, 1} in calls
-    end
-
-    test "external calls appear in values but not as graph keys" do
-      graph = CallGraph.create([beam(DemoApp.Worker)], [{DemoApp.Worker, :process, 1}])
-      calls = graph[{DemoApp.Worker, :process, 1}]
-      assert {String, :upcase, 1} in calls
-      refute Map.has_key?(graph, {String, :upcase, 1})
     end
 
     test "call list for a reachable callee is also populated" do
