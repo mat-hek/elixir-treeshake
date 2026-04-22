@@ -1,5 +1,5 @@
 defmodule Treeshake.Shaker do
-  @non_treeshakable_apps [:erts, :kernel, :stdlib, :logger]
+  @non_treeshakable_apps [:erts, :stdlib, :kernel, :logger]
 
   @keep_funs [
     module_info: 0,
@@ -49,11 +49,17 @@ defmodule Treeshake.Shaker do
     unless opts.dry_run, do: Enum.each(to_remove, &File.rm!/1)
 
     functions_removed =
-      Map.new(to_shake, fn path ->
-        {shaked, functions_removed} = do_shake(path, reachable_mods_funs)
-        unless opts.dry_run, do: File.write!(path, shaked)
-        {beam_module(path), functions_removed}
-      end)
+      to_shake
+      |> Task.async_stream(
+        fn path ->
+          {shaked, functions_removed} = do_shake(path, reachable_mods_funs)
+          unless opts.dry_run, do: File.write!(path, shaked)
+          {beam_module(path), functions_removed}
+        end,
+        ordered: false,
+        timeout: 15_000
+      )
+      |> Map.new(fn {:ok, result} -> result end)
 
     %{
       modules_removed: to_remove |> Enum.map(&beam_module/1) |> Enum.sort(),

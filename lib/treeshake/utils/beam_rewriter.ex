@@ -17,11 +17,23 @@ defmodule Treeshake.Utils.BeamRewriter do
 
   Raises on any failure (missing file, no debug_info, compile error, etc.).
   """
-  @spec keep_funs(Path.t(), [{atom(), non_neg_integer()}]) :: {binary(), [{atom(), non_neg_integer()}]}
+  @spec keep_funs(Path.t(), [{atom(), non_neg_integer()}]) ::
+          {binary(), [{atom(), non_neg_integer()}]}
   def keep_funs(beam_path, functions) do
     to_keep = MapSet.new(functions)
 
     {module, forms} = read_abstract_code!(beam_path)
+
+    # Pre-compute which local functions will be removed so we can strip
+    # references to them from record field defaults and similar attributes.
+    to_remove =
+      forms
+      |> Enum.flat_map(fn
+        {:function, _, name, arity, _} -> [{name, arity}]
+        _ -> []
+      end)
+      |> MapSet.new()
+      |> MapSet.difference(to_keep)
 
     {new_forms, removed} =
       Enum.flat_map_reduce(forms, [], fn
@@ -39,6 +51,26 @@ defmodule Treeshake.Utils.BeamRewriter do
 
         {:attribute, line, :compile, value}, removed ->
           {[{:attribute, line, :compile, filter_inline(value, to_keep)}], removed}
+
+        {:attribute, line, :dialyzer, value}, removed ->
+          case filter_dialyzer(value, to_keep) do
+            nil -> {[], removed}
+            filtered -> {[{:attribute, line, :dialyzer, filtered}], removed}
+          end
+
+        {:attribute, line, :deprecated, entries}, removed when is_list(entries) ->
+          filtered =
+            Enum.filter(entries, fn
+              {f, a, _reason} -> MapSet.member?(to_keep, {f, a})
+              {f, a} -> MapSet.member?(to_keep, {f, a})
+              _ -> true
+            end)
+
+          {[{:attribute, line, :deprecated, filtered}], removed}
+
+        {:attribute, line, :record, {record_name, fields}}, removed ->
+          cleaned = Enum.map(fields, &strip_removed_default(&1, to_remove))
+          {[{:attribute, line, :record, {record_name, cleaned}}], removed}
 
         form, removed ->
           {[form], removed}
@@ -76,14 +108,71 @@ defmodule Treeshake.Utils.BeamRewriter do
     end
   end
 
+  # Strip the default value from a record field if its default expression is a
+  # local call to a function that was removed. Erlang lint rejects such
+  # references even when no code path actually exercises the default.
+  defp strip_removed_default({:typed_record_field, rf, type}, to_remove) do
+    {:typed_record_field, strip_removed_default(rf, to_remove), type}
+  end
+
+  defp strip_removed_default(
+         {:record_field, line, name, {:call, _, {:atom, _, f}, args}},
+         to_remove
+       )
+       when is_atom(f) do
+    if MapSet.member?(to_remove, {f, length(args)}),
+      do: {:record_field, line, name},
+      else: {:record_field, line, name, {:call, line, {:atom, line, f}, args}}
+  end
+
+  defp strip_removed_default(field, _to_remove), do: field
+
+  # Returns nil to signal "drop the attribute entirely".
+  defp filter_dialyzer(atom, _to_keep) when is_atom(atom), do: atom
+
+  defp filter_dialyzer({type, {f, a}}, to_keep) do
+    if MapSet.member?(to_keep, {f, a}), do: {type, {f, a}}, else: nil
+  end
+
+  defp filter_dialyzer({type, funs}, to_keep) when is_list(funs) do
+    case Enum.filter(funs, fn
+           {f, a} -> MapSet.member?(to_keep, {f, a})
+           _ -> true
+         end) do
+      [] -> nil
+      filtered -> {type, filtered}
+    end
+  end
+
+  defp filter_dialyzer(entries, to_keep) when is_list(entries) do
+    case Enum.flat_map(entries, fn entry ->
+           case filter_dialyzer(entry, to_keep) do
+             nil -> []
+             v -> [v]
+           end
+         end) do
+      [] -> nil
+      filtered -> filtered
+    end
+  end
+
+  defp filter_dialyzer(other, _to_keep), do: other
+
   defp filter_inline({:inline, inlines}, to_keep) when is_list(inlines) do
     {:inline, Enum.filter(inlines, fn {f, a} -> MapSet.member?(to_keep, {f, a}) end)}
   end
 
+  defp filter_inline({:inline, {f, a}}, to_keep) do
+    if MapSet.member?(to_keep, {f, a}), do: {:inline, {f, a}}, else: {:inline, []}
+  end
+
   defp filter_inline(opts, to_keep) when is_list(opts) do
     Enum.map(opts, fn
-      {:inline, inlines} ->
+      {:inline, inlines} when is_list(inlines) ->
         {:inline, Enum.filter(inlines, fn {f, a} -> MapSet.member?(to_keep, {f, a}) end)}
+
+      {:inline, {f, a}} ->
+        if MapSet.member?(to_keep, {f, a}), do: {:inline, {f, a}}, else: {:inline, []}
 
       other ->
         other
@@ -93,10 +182,11 @@ defmodule Treeshake.Utils.BeamRewriter do
   defp filter_inline(other, _to_keep), do: other
 
   defp format_errors(errors) do
-    Enum.map_join(errors, "\n", fn {file, file_errors} ->
-      Enum.map_join(file_errors, "\n", fn {line, mod, desc} ->
-        "#{file}:#{line}: #{mod.format_error(desc)}"
-      end)
-    end)
+    inspect(errors)
+    # Enum.map_join(errors, "\n", fn {file, file_errors} ->
+    #   Enum.map_join(file_errors, "\n", fn {line, mod, desc} ->
+    #     "#{file}:#{line}: #{mod.format_error(desc)}"
+    #   end)
+    # end)
   end
 end

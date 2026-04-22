@@ -297,7 +297,7 @@ defmodule Treeshake.Utils.BeamReaderTest do
 
     assert child_spec = Enum.find(info.functions, &(&1.name == :child_spec))
 
-    assert Enum.find(child_spec, fn
+    assert Enum.find(child_spec.calls, fn
              {Task, :start_link, _args} -> true
              _other -> false
            end)

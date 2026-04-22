@@ -21,7 +21,8 @@
       "Bash(dialyzer --callgraph /tmp/cg_test.dot --plt \"$PLT\" -r \"$EBIN\")",
       "Bash(echo \"exit: $?\")",
       "Read(//tmp/**)",
-      "Bash(mix run -e ':*)"
+      "Bash(mix run -e ':*)",
+      "Bash(elixir -e ':*)"
     ]
   }
 }

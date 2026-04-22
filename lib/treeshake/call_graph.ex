@@ -104,7 +104,18 @@ defmodule Treeshake.CallGraph do
 
   defp build_module_index(beam_paths) do
     Map.new(beam_paths, fn path ->
-      analysis = path |> BeamReader.read!() |> BeamAnalyzer.analyze()
+      analysis =
+        path
+        |> BeamReader.read!()
+        |> case do
+          %{module: :application_controller} = info ->
+            %{info | behaviour_impls: [:gen_server | info.behaviour_impls]}
+
+          info ->
+            info
+        end
+        |> BeamAnalyzer.analyze()
+
       {analysis.module, analysis}
     end)
   end

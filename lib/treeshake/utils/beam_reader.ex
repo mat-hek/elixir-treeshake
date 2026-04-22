@@ -6,21 +6,6 @@ defmodule Treeshake.Utils.BeamReader do
   defmodule FunctionInfo do
     @moduledoc false
     defstruct [:name, :arity, :public, :calls, :potential_modules, matching_terms: []]
-
-    # Enumerating a FunctionInfo iterates over its matching_terms, so callers
-    # can write `Enum.find(function_info, fn {M, f, a} -> ... end)`.
-    defimpl Enumerable do
-      def count(%{matching_terms: terms}), do: {:ok, length(terms)}
-      def member?(%{matching_terms: terms}, el), do: {:ok, el in terms}
-
-      def reduce(%{matching_terms: terms}, acc, fun),
-        do: Enumerable.List.reduce(terms, acc, fun)
-
-      def slice(%{matching_terms: terms}) do
-        size = length(terms)
-        {:ok, size, fn i, n -> Enum.slice(terms, i, n) end}
-      end
-    end
   end
 
   @type name_arity :: {atom(), non_neg_integer()}
@@ -193,6 +178,36 @@ defmodule Treeshake.Utils.BeamReader do
     Enum.flat_map(forms, &collect_calls/1)
   end
 
+  # Functions of the form remote_mod:fun(M, F, Args, ...) where M and F are atom
+  # literals and Args is the argument list — extract as a static call to M:F/arity.
+  # Covers erlang:spawn/3, erlang:spawn_link/3, erlang:apply/3,
+  # erlang:spawn_opt/4, proc_lib:start*/3-5, proc_lib:spawn*/3-5, etc.
+  @mfa_callers %{
+    erlang: [:spawn, :spawn_link, :apply],
+    proc_lib: [:start, :start_link, :start_monitor, :spawn, :spawn_link, :spawn_opt, :spawn_mon]
+  }
+
+  defp collect_calls(
+         {:call, _, {:remote, _, {:atom, _, mod}, {:atom, _, fun}},
+          [{:atom, _, m}, {:atom, _, f}, args_list | rest] = all_args}
+       )
+       when is_atom(m) and is_atom(f) and
+              is_map_key(@mfa_callers, mod) do
+    funs = Map.fetch!(@mfa_callers, mod)
+
+    if fun in funs do
+      own =
+        case count_list(args_list) do
+          {:ok, arity} -> [{m, f, arity}]
+          :error -> []
+        end
+
+      [{mod, fun, length(all_args)}] ++ own ++ collect_calls(args_list) ++ collect_calls(rest)
+    else
+      [{mod, fun, length(all_args)}] ++ collect_calls(all_args)
+    end
+  end
+
   # Remote call: Mod.fun(args)
   defp collect_calls({:call, _, {:remote, _, {:atom, _, mod}, {:atom, _, fun}}, args}) do
     [{mod, fun, length(args)}] ++ collect_calls(args)
@@ -214,9 +229,9 @@ defmodule Treeshake.Utils.BeamReader do
     [{nil, name, arity}]
   end
 
-  # Call through a variable or complex expression — recurse into args only
-  defp collect_calls({:call, _, _fun_expr, args}) do
-    collect_calls(args)
+  # Call through a variable or complex expression — recurse into both
+  defp collect_calls({:call, _, fun_expr, args}) do
+    collect_calls(fun_expr) ++ collect_calls(args)
   end
 
   # Hardcoded MFA tuple: {Mod, :fun, arity} or {Mod, :fun, [args]}
