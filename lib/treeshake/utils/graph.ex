@@ -159,6 +159,100 @@ defmodule Treeshake.Utils.Graph do
     "digraph {\n#{Enum.join(lines, "\n")}\n}\n"
   end
 
+  @doc """
+  Returns the subgraph induced by all nodes reachable from `node` within `distance` hops.
+
+  Follows forward edges. The result contains every node (including `node` itself)
+  reachable in at most `distance` steps, with adjacency lists trimmed to only
+  include edges whose target is also within the neighborhood.
+
+  ## Example
+
+      iex> Treeshake.Utils.Graph.neighborhood(%{a: [:b, :c], b: [:d], c: [], d: []}, :a, 1)
+      %{a: [:b, :c], b: [], c: []}
+
+      iex> Treeshake.Utils.Graph.neighborhood(%{a: [:b, :c], b: [:d], c: [], d: []}, :a, 2)
+      %{a: [:b, :c], b: [:d], c: [], d: []}
+  """
+  @spec neighborhood(%{node => [node]}, node, non_neg_integer()) :: %{node => [node]}
+        when node: term()
+  def neighborhood(graph, node, distance) do
+    nodes = do_neighborhood(graph, [{node, 0}], MapSet.new([node]), distance)
+
+    Map.new(nodes, fn n ->
+      {n, Map.get(graph, n, []) |> Enum.filter(&MapSet.member?(nodes, &1))}
+    end)
+  end
+
+  defp do_neighborhood(_graph, [], visited, _distance), do: visited
+
+  defp do_neighborhood(graph, [{node, depth} | queue], visited, distance) do
+    {queue, visited} =
+      if depth < distance do
+        Enum.reduce(Map.get(graph, node, []), {queue, visited}, fn neighbor, {q, vis} ->
+          if MapSet.member?(vis, neighbor) do
+            {q, vis}
+          else
+            {q ++ [{neighbor, depth + 1}], MapSet.put(vis, neighbor)}
+          end
+        end)
+      else
+        {queue, visited}
+      end
+
+    do_neighborhood(graph, queue, visited, distance)
+  end
+
+  @doc """
+  Converts an adjacency map to a Mermaid flowchart string.
+
+  Each key in `graph` becomes a node, and each edge `{from, to}` becomes a
+  directed arrow. Node labels are derived by calling `to_string/1` on each node.
+
+  ## Example
+
+      iex> graph = %{{Foo, :a, 0} => [{Bar, :b, 1}], {Bar, :b, 1} => []}
+      iex> Treeshake.Utils.Graph.to_mermaid(graph)
+      ~s(flowchart TD\\n  Foo.a/0 --> Bar.b/1\\n  Bar.b/1\\n)
+  """
+  @spec to_mermaid(%{node => [node]}) :: String.t() when node: term()
+  def to_mermaid(graph) do
+    lines =
+      Enum.flat_map(graph, fn {from, tos} ->
+        from_label = node_label(from)
+
+        case tos do
+          [] -> ["  #{from_label}"]
+          _ -> Enum.map(tos, fn to -> "  #{from_label} --> #{node_label(to)}" end)
+        end
+      end)
+
+    "flowchart TD\n#{Enum.join(lines, "\n")}\n"
+  end
+
+  @doc """
+  Reverses an adjacency map, swapping edge direction.
+
+  Each edge `from -> to` in `graph` becomes `to -> from` in the result.
+  Nodes that appear only as targets (with no outgoing edges) are added as
+  keys with empty adjacency lists.
+
+  ## Example
+
+      iex> Treeshake.Utils.Graph.reverse(%{a: [:b, :c], b: [:c], c: []})
+      %{a: [], b: [:a], c: [:a, :b]}
+  """
+  @spec reverse(%{node => [node]}) :: %{node => [node]} when node: term()
+  def reverse(graph) do
+    base = Map.new(graph, fn {k, _} -> {k, []} end)
+
+    Enum.reduce(graph, base, fn {from, tos}, acc ->
+      Enum.reduce(tos, acc, fn to, acc ->
+        Map.update(acc, to, [from], &(&1 ++ [from]))
+      end)
+    end)
+  end
+
   defp node_label({m, f, a}) do
     mod =
       m

@@ -27,3 +27,5 @@ treeshake-*.tar
 
 # Compiled artifacts from test fixture projects.
 /test/fixtures/*/_build/
+
+.DS_Store
