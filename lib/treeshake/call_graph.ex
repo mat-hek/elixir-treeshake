@@ -75,7 +75,11 @@ defmodule Treeshake.CallGraph do
         |> Enum.filter(fn info -> Map.has_key?(info.public_functions, {:child_spec, 1}) end)
         |> Enum.map(fn info -> {info.module, :child_spec, 1} end)
 
-      all_calls = Enum.uniq(calls ++ behaviour_calls ++ child_spec_calls) |> Enum.reject(&(&1 == mfa))
+      all_calls =
+        Enum.uniq(calls ++ behaviour_calls ++ child_spec_calls)
+        |> Enum.reject(&(&1 == mfa))
+        |> Enum.sort()
+
       {all_calls, Map.put(graph, mfa, all_calls)}
     end)
   end
