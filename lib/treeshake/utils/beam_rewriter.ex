@@ -2,8 +2,9 @@ defmodule Treeshake.Utils.BeamRewriter do
   @moduledoc """
   Low-level utility for rewriting compiled BEAM files by keeping only specific functions.
 
-  Reads the abstract code chunk, strips all functions not in the keep list (along
-  with their export entries and typespecs), recompiles, and returns the resulting binary.
+  Reads the abstract code chunk, converts to core erlang, strips all functions not in the
+  keep list (along with their export entries and typespecs), recompiles from core erlang,
+  and returns the resulting binary.
 
   Raises if the BEAM cannot be read, has no `debug_info`, or fails to recompile.
   """
@@ -22,81 +23,63 @@ defmodule Treeshake.Utils.BeamRewriter do
   def keep_funs(beam_path, functions) do
     to_keep = MapSet.new(functions)
 
-    {module, forms} = read_abstract_code!(beam_path)
+    {module, core} = read_core!(beam_path)
 
-    # Pre-compute which local functions will be removed so we can strip
-    # references to them from record field defaults and similar attributes.
-    to_remove =
-      forms
-      |> Enum.flat_map(fn
-        {:function, _, name, arity, _} -> [{name, arity}]
-        _ -> []
-      end)
-      |> MapSet.new()
-      |> MapSet.difference(to_keep)
+    {:c_module, anno, name, exports, attrs, defs} = core
 
-    {new_forms, removed} =
-      Enum.flat_map_reduce(forms, [], fn
-        {:function, _line, name, arity, _clauses} = form, removed ->
-          if MapSet.member?(to_keep, {name, arity}),
-            do: {[form], removed},
-            else: {[], [{name, arity} | removed]}
-
-        {:attribute, line, :export, exports}, removed ->
-          filtered = Enum.filter(exports, fn {f, a} -> MapSet.member?(to_keep, {f, a}) end)
-          {[{:attribute, line, :export, filtered}], removed}
-
-        {:attribute, _line, :spec, {{name, arity}, _}} = form, removed ->
-          if MapSet.member?(to_keep, {name, arity}), do: {[form], removed}, else: {[], removed}
-
-        {:attribute, line, :compile, value}, removed ->
-          {[{:attribute, line, :compile, filter_inline(value, to_keep)}], removed}
-
-        {:attribute, line, :dialyzer, value}, removed ->
-          case filter_dialyzer(value, to_keep) do
-            nil -> {[], removed}
-            filtered -> {[{:attribute, line, :dialyzer, filtered}], removed}
-          end
-
-        {:attribute, line, :deprecated, entries}, removed when is_list(entries) ->
-          filtered =
-            Enum.filter(entries, fn
-              {f, a, _reason} -> MapSet.member?(to_keep, {f, a})
-              {f, a} -> MapSet.member?(to_keep, {f, a})
-              _ -> true
-            end)
-
-          {[{:attribute, line, :deprecated, filtered}], removed}
-
-        {:attribute, line, :record, {record_name, fields}}, removed ->
-          cleaned = Enum.map(fields, &strip_removed_default(&1, to_remove))
-          {[{:attribute, line, :record, {record_name, cleaned}}], removed}
-
-        form, removed ->
-          {[form], removed}
+    {new_defs, removed} =
+      Enum.flat_map_reduce(defs, [], fn
+        {{:c_var, _, {fname, farity}}, _} = def, acc ->
+          if MapSet.member?(to_keep, {fname, farity}),
+            do: {[def], acc},
+            else: {[], [{fname, farity} | acc]}
       end)
 
-    {compile!(module, new_forms, beam_path), removed}
+    new_exports =
+      Enum.filter(exports, fn {:c_var, _, {fname, farity}} ->
+        MapSet.member?(to_keep, {fname, farity})
+      end)
+
+    new_attrs = filter_attrs(attrs, to_keep)
+
+    new_core = {:c_module, anno, name, new_exports, new_attrs, new_defs}
+
+    {compile!(module, new_core, beam_path), removed}
   end
 
-  defp read_abstract_code!(beam_path) do
-    case beam_path |> String.to_charlist() |> :beam_lib.chunks([:abstract_code]) do
-      {:ok, {module, [abstract_code: {:raw_abstract_v1, forms}]}} ->
-        {module, forms}
+  defp read_core!(beam_path) do
+    if File.exists?(beam_path <> ".core") do
+      core = (beam_path <> ".core") |> File.read!() |> :erlang.binary_to_term()
+      module = beam_path |> Path.basename(".beam") |> String.to_atom()
+      {module, core}
+    else
+      case beam_path |> String.to_charlist() |> :beam_lib.chunks([:abstract_code]) do
+        {:ok, {module, [abstract_code: {:raw_abstract_v1, abstract_forms}]}} ->
+          case :compile.noenv_forms(abstract_forms, [:to_core]) do
+            {:ok, ^module, core} ->
+              {module, core}
 
-      {:ok, {_module, [abstract_code: :no_abstract_code]}} ->
-        raise "no abstract code (debug_info) in #{beam_path}"
+            {:ok, ^module, core, _warnings} ->
+              {module, core}
 
-      {:error, :beam_lib, reason} ->
-        raise "failed to read BEAM #{beam_path}: #{inspect(reason)}"
+            error ->
+              raise "failed to convert #{beam_path} to core erlang: #{inspect(error)}"
+          end
 
-      error ->
-        raise "unexpected error reading #{beam_path}: #{inspect(error)}"
+        {:ok, {_module, [abstract_code: :no_abstract_code]}} ->
+          raise "no abstract code (debug_info) in #{beam_path}"
+
+        {:error, :beam_lib, reason} ->
+          raise "failed to read BEAM #{beam_path}: #{inspect(reason)}"
+
+        error ->
+          raise "unexpected error reading #{beam_path}: #{inspect(error)}"
+      end
     end
   end
 
-  defp compile!(module, forms, beam_path) do
-    case :compile.forms(forms, [:return_errors, :return_warnings, :debug_info]) do
+  defp compile!(module, core, beam_path) do
+    case :compile.noenv_forms(core, [:from_core, :return_errors, :return_warnings, :debug_info]) do
       {:ok, ^module, binary, _warnings} ->
         binary
 
@@ -108,24 +91,44 @@ defmodule Treeshake.Utils.BeamRewriter do
     end
   end
 
-  # Strip the default value from a record field if its default expression is a
-  # local call to a function that was removed. Erlang lint rejects such
-  # references even when no code path actually exercises the default.
-  defp strip_removed_default({:typed_record_field, rf, type}, to_remove) do
-    {:typed_record_field, strip_removed_default(rf, to_remove), type}
-  end
+  defp filter_attrs(attrs, to_keep) do
+    Enum.flat_map(attrs, fn
+      {{:c_literal, anno_k, :spec}, {:c_literal, anno_v, specs}} when is_list(specs) ->
+        # Core Erlang groups all specs into a single list value.
+        filtered =
+          Enum.filter(specs, fn
+            {{fname, farity}, _} -> MapSet.member?(to_keep, {fname, farity})
+            _ -> true
+          end)
 
-  defp strip_removed_default(
-         {:record_field, line, name, {:call, _, {:atom, _, f}, args}},
-         to_remove
-       )
-       when is_atom(f) do
-    if MapSet.member?(to_remove, {f, length(args)}),
-      do: {:record_field, line, name},
-      else: {:record_field, line, name, {:call, line, {:atom, line, f}, args}}
-  end
+        case filtered do
+          [] -> []
+          _ -> [{{:c_literal, anno_k, :spec}, {:c_literal, anno_v, filtered}}]
+        end
 
-  defp strip_removed_default(field, _to_remove), do: field
+      {{:c_literal, anno_k, :compile}, {:c_literal, anno_v, value}} ->
+        [{{:c_literal, anno_k, :compile}, {:c_literal, anno_v, filter_inline(value, to_keep)}}]
+
+      {{:c_literal, anno_k, :dialyzer}, {:c_literal, anno_v, value}} ->
+        case filter_dialyzer(value, to_keep) do
+          nil -> []
+          filtered -> [{{:c_literal, anno_k, :dialyzer}, {:c_literal, anno_v, filtered}}]
+        end
+
+      {{:c_literal, anno_k, :deprecated}, {:c_literal, anno_v, entries}} when is_list(entries) ->
+        filtered =
+          Enum.filter(entries, fn
+            {f, a, _reason} -> MapSet.member?(to_keep, {f, a})
+            {f, a} -> MapSet.member?(to_keep, {f, a})
+            _ -> true
+          end)
+
+        [{{:c_literal, anno_k, :deprecated}, {:c_literal, anno_v, filtered}}]
+
+      attr ->
+        [attr]
+    end)
+  end
 
   # Returns nil to signal "drop the attribute entirely".
   defp filter_dialyzer(atom, _to_keep) when is_atom(atom), do: atom
@@ -183,10 +186,5 @@ defmodule Treeshake.Utils.BeamRewriter do
 
   defp format_errors(errors) do
     inspect(errors)
-    # Enum.map_join(errors, "\n", fn {file, file_errors} ->
-    #   Enum.map_join(file_errors, "\n", fn {line, mod, desc} ->
-    #     "#{file}:#{line}: #{mod.format_error(desc)}"
-    #   end)
-    # end)
   end
 end

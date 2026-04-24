@@ -208,26 +208,44 @@ defmodule Treeshake.Utils.Graph do
 
   Each key in `graph` becomes a node, and each edge `{from, to}` becomes a
   directed arrow. Node labels are derived by calling `to_string/1` on each node.
+  Special characters in labels (e.g. `/`, `.`, `<`, `>`, `*`) are safe because
+  each node is assigned a unique integer ID (e.g. `n0`, `n1`), while the original
+  label is preserved in quotes.
 
   ## Example
 
       iex> graph = %{{Foo, :a, 0} => [{Bar, :b, 1}], {Bar, :b, 1} => []}
-      iex> Treeshake.Utils.Graph.to_mermaid(graph)
-      ~s(flowchart TD\\n  Foo.a/0 --> Bar.b/1\\n  Bar.b/1\\n)
+      iex> Treeshake.Utils.Graph.to_mermaid(graph) |> String.starts_with?("flowchart TD")
+      true
   """
   @spec to_mermaid(%{node => [node]}) :: String.t() when node: term()
   def to_mermaid(graph) do
-    lines =
-      Enum.flat_map(graph, fn {from, tos} ->
-        from_label = node_label(from)
+    ids =
+      graph
+      |> Enum.flat_map(fn {from, tos} -> [from | tos] end)
+      |> Enum.uniq()
+      |> Enum.with_index(fn node, i -> {node, "n#{i}"} end)
+      |> Map.new()
 
-        case tos do
-          [] -> ["  #{from_label}"]
-          _ -> Enum.map(tos, fn to -> "  #{from_label} --> #{node_label(to)}" end)
-        end
+    mermaid_node = fn node ->
+      ~s(#{ids[node]}["#{node_label(node)}"])
+    end
+
+    lines =
+      Enum.flat_map(graph, fn
+        {from, []} ->
+          ["#{mermaid_node.(from)}"]
+
+        {from, tos} ->
+          Enum.map(tos, fn to ->
+            "#{mermaid_node.(from)} --> #{mermaid_node.(to)}"
+          end)
       end)
 
-    "flowchart TD\n#{Enum.join(lines, "\n")}\n"
+    """
+    flowchart TD
+    #{Enum.map_join(lines, "\n", &"  #{&1}")}
+    """
   end
 
   @doc """

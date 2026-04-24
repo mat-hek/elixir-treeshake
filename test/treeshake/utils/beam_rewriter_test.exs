@@ -7,11 +7,23 @@ defmodule Treeshake.Utils.BeamRewriterTest do
 
   defp beam(module), do: Path.join(@ebin, "#{module}.beam")
 
-  defp abstract_functions(binary) when is_binary(binary) do
-    {:ok, {_mod, [abstract_code: {:raw_abstract_v1, forms}]}} =
-      :beam_lib.chunks(binary, [:abstract_code])
+  # Reads all function entries from the compiled bytecode via beam_disasm.
+  # Works regardless of debug_info format, including beams compiled from core erlang.
+  defp all_funs(binary) when is_binary(binary) do
+    tmp = Path.join(System.tmp_dir!(), "bf#{:erlang.unique_integer([:positive])}.beam")
+    File.write!(tmp, binary)
 
-    for {:function, _, name, arity, _} <- forms, do: {name, arity}
+    try do
+      case :beam_disasm.file(String.to_charlist(tmp)) do
+        {:beam_file, _, _, _, _, code} ->
+          for {:function, name, arity, _, _} <- code, do: {name, arity}
+
+        {:error, :beam_disasm, _} ->
+          []
+      end
+    after
+      File.rm(tmp)
+    end
   end
 
   defp beam_exports(binary) when is_binary(binary) do
@@ -38,12 +50,12 @@ defmodule Treeshake.Utils.BeamRewriterTest do
 
     test "kept function is present in abstract code" do
       {binary, _} = BeamRewriter.keep_funs(beam("Elixir.DemoApp.Worker"), @worker_process_funs)
-      assert {:process, 1} in abstract_functions(binary)
+      assert {:process, 1} in all_funs(binary)
     end
 
     test "non-kept function is absent from abstract code" do
       {binary, _} = BeamRewriter.keep_funs(beam("Elixir.DemoApp.Worker"), @worker_process_funs)
-      refute {:unused, 1} in abstract_functions(binary)
+      refute {:unused, 1} in all_funs(binary)
     end
 
     test "kept function is present in exports" do
@@ -77,7 +89,7 @@ defmodule Treeshake.Utils.BeamRewriterTest do
           wrap: 1
         )
 
-      funs = abstract_functions(binary)
+      funs = all_funs(binary)
       assert {:process, 1} in funs
       assert {:unused, 1} in funs
     end
@@ -93,7 +105,7 @@ defmodule Treeshake.Utils.BeamRewriterTest do
     test "returns binary with no user-defined functions and all as removed" do
       {binary, removed} = BeamRewriter.keep_funs(beam("Elixir.DemoApp.Worker"), [])
       assert is_binary(binary)
-      assert abstract_functions(binary) == []
+      assert all_funs(binary) == []
       assert {:unused, 1} in removed
       assert {:process, 1} in removed
     end

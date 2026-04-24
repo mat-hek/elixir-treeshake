@@ -2,7 +2,12 @@ defmodule Treeshake.CallGraphTest do
   use ExUnit.Case, async: true
 
   setup_all do
-    graph = Treeshake.build_call_graph(project: "test/fixtures/demo_app")
+    graph =
+      Treeshake.build_call_graph(
+        project: "test/fixtures/demo_app",
+        extra_entry_points: [{Elixir.Supervisor.Default, :init, 1}]
+      )
+
     # File.write!("test/fixtures/call_graph.bin", :erlang.term_to_binary(graph))
     {:ok, graph: graph}
   end
