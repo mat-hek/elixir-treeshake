@@ -12,6 +12,7 @@ defmodule Treeshake.Shaker do
 
   def shake(all_beams, cg, opts) do
     non_treeshakable_modules = Map.get(opts, :non_treeshakable_modules, [])
+    stub_removed = Map.get(opts, :stub_removed, false)
 
     non_treeshakable_modules =
       MapSet.new(non_treeshakable_modules ++ non_treeshakable_stdlib_modules())
@@ -41,25 +42,33 @@ defmodule Treeshake.Shaker do
     reachable_mods = MapSet.new(reachable_mods_funs, fn {m, _fa} -> m end)
 
     {to_shake, to_remove} = Enum.split_with(all_beams, &(beam_module(&1) in reachable_mods))
-    # dbg(to_shake, limit: :infinity)
-    # dbg(to_remove, limit: :infinity)
-    # to_shake = []
-    # to_remove = []
-
-    unless opts.dry_run, do: Enum.each(to_remove, &File.rm!/1)
 
     functions_removed =
-      to_shake
-      |> Task.async_stream(
+      process_async(
+        to_shake,
         fn path ->
           {shaked, functions_removed} = do_shake(path, reachable_mods_funs)
           unless opts.dry_run, do: File.write!(path, shaked)
           {beam_module(path), functions_removed}
-        end,
-        ordered: false,
-        timeout: 15_000
+        end
       )
-      |> Map.new(fn {:ok, result} -> result end)
+
+    {to_remove, functions_removed} =
+      if stub_removed do
+        functions_stubbed =
+          process_async(to_remove, fn path ->
+            {shaked, functions_removed} =
+              Treeshake.Utils.BeamRewriter.keep_funs(path, [], stub_removed_public: true)
+
+            unless opts.dry_run, do: File.write!(path, shaked)
+            {beam_module(path), functions_removed}
+          end)
+
+        {[], Map.merge(functions_removed, functions_stubbed)}
+      else
+        unless opts.dry_run, do: Enum.each(to_remove, &File.rm!/1)
+        {to_remove, functions_removed}
+      end
 
     %{
       modules_removed: to_remove |> Enum.map(&beam_module/1) |> Enum.sort(),
@@ -100,5 +109,11 @@ defmodule Treeshake.Shaker do
 
   defp beam_module(beam_path) do
     beam_path |> Path.basename(".beam") |> String.to_atom()
+  end
+
+  defp process_async(enum, fun) do
+    enum
+    |> Task.async_stream(fun, ordered: false, timeout: 15_000)
+    |> Map.new(fn {:ok, result} -> result end)
   end
 end

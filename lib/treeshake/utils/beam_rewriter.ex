@@ -16,35 +16,71 @@ defmodule Treeshake.Utils.BeamRewriter do
   retain. All other functions, their export entries, typespecs, and inline hints
   are removed.
 
+  ## Options
+
+    * `:stub_removed_public` - when `true`, removed public (exported) functions are
+      replaced with stub implementations that raise `Treeshake.Treeshaked` at runtime,
+      carrying the module, function name, and arity. Defaults to `false`.
+
   Raises on any failure (missing file, no debug_info, compile error, etc.).
   """
-  @spec keep_funs(Path.t(), [{atom(), non_neg_integer()}]) ::
+  @spec keep_funs(Path.t(), [{atom(), non_neg_integer()}], map()) ::
           {binary(), [{atom(), non_neg_integer()}]}
-  def keep_funs(beam_path, functions) do
+  def keep_funs(beam_path, functions, opts \\ []) do
     to_keep = MapSet.new(functions)
+    stub_removed_public = Keyword.get(opts, :stub_removed_public, false)
 
     {module, core} = read_core!(beam_path)
 
     {:c_module, anno, name, exports, attrs, defs} = core
 
+    stubbable =
+      if stub_removed_public do
+        MapSet.new(exports, fn {:c_var, _, {fname, farity}} -> {fname, farity} end)
+      else
+        MapSet.new()
+      end
+
     {new_defs, removed} =
       Enum.flat_map_reduce(defs, [], fn
         {{:c_var, _, {fname, farity}}, _} = def, acc ->
-          if MapSet.member?(to_keep, {fname, farity}),
-            do: {[def], acc},
-            else: {[], [{fname, farity} | acc]}
+          cond do
+            MapSet.member?(to_keep, {fname, farity}) ->
+              {[def], acc}
+
+            MapSet.member?(stubbable, {fname, farity}) ->
+              {[make_stub({fname, farity}, module)], [{fname, farity} | acc]}
+
+            true ->
+              {[], [{fname, farity} | acc]}
+          end
       end)
 
     new_exports =
-      Enum.filter(exports, fn {:c_var, _, {fname, farity}} ->
-        MapSet.member?(to_keep, {fname, farity})
-      end)
+      if stub_removed_public do
+        exports
+      else
+        Enum.filter(exports, fn {:c_var, _, {fname, farity}} ->
+          MapSet.member?(to_keep, {fname, farity})
+        end)
+      end
 
     new_attrs = filter_attrs(attrs, to_keep)
 
     new_core = {:c_module, anno, name, new_exports, new_attrs, new_defs}
 
     {compile!(module, new_core, beam_path), removed}
+  end
+
+  defp make_stub({fname, farity}, module) do
+    vars = for i <- 0..(farity - 1)//1, do: {:c_var, [], :"_V#{i}"}
+
+    body =
+      {:c_call, [], {:c_literal, [], :"Elixir.Treeshake.TreeshakedError"},
+       {:c_literal, [], :trigger},
+       [{:c_literal, [], module}, {:c_literal, [], fname}, {:c_literal, [], farity}]}
+
+    {{:c_var, [], {fname, farity}}, {:c_fun, [], vars, body}}
   end
 
   defp read_core!(beam_path) do
