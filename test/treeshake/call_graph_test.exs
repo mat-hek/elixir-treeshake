@@ -8,7 +8,7 @@ defmodule Treeshake.CallGraphTest do
         extra_entry_points: [{Elixir.Supervisor.Default, :init, 1}]
       )
 
-    # File.write!("test/fixtures/call_graph.bin", :erlang.term_to_binary(graph))
+    File.write!("test/fixtures/call_graph.bin", :erlang.term_to_binary(graph))
     {:ok, graph: graph}
   end
 

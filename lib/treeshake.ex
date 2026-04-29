@@ -6,7 +6,7 @@ defmodule Treeshake do
 
     beams = filter_ext(opts.ebin_files, ".beam")
 
-    call_graph = do_build_call_graph(opts)
+    call_graph = Map.get_lazy(opts, :call_graph, fn -> do_build_call_graph(opts) end)
     # dbg(call_graph, limit: :infinity)
     # dbg(Treeshake.CallGraph.explain(call_graph, Calendar.ISO))
 

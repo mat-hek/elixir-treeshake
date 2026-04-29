@@ -44,6 +44,16 @@ defmodule Treeshake.CallGraph do
   def create(beam_paths, entry_points) do
     module_index = build_module_index(beam_paths)
 
+    entry_points =
+      Enum.flat_map(entry_points, fn
+        {m, f, a} ->
+          [{m, f, a}]
+
+        m when is_atom(m) ->
+          Map.fetch!(module_index, m).public_functions
+          |> Enum.map(fn {{f, a}, _info} -> {m, f, a} end)
+      end)
+
     Graph.bfs(@hardcoded_entry_points ++ entry_points, %{}, fn {m, f, a} = mfa, graph ->
       {calls, potential_modules} =
         with %{^m => %{public_functions: pub}} <- module_index,
@@ -92,28 +102,6 @@ defmodule Treeshake.CallGraph do
 
       {all_calls, Map.put(graph, mfa, all_calls)}
     end)
-  end
-
-  def explain(graph, mfa, max_len \\ 8)
-
-  def explain(graph, m, max_len) when is_atom(m) do
-    explain(graph, {m, nil, nil}, max_len)
-  end
-
-  def explain(graph, {m, f}, max_len) do
-    explain(graph, {m, f, nil}, max_len)
-  end
-
-  def explain(graph, {m, f, a}, max_len) do
-    entry_points =
-      Enum.flat_map(graph, fn {k, v} ->
-        Enum.filter([k | v], fn {m1, f1, a1} ->
-          m in [m1, nil] and f in [f1, nil] and a in [a1, nil]
-        end)
-      end)
-      |> Enum.uniq()
-
-    Graph.reachable_paths(graph, entry_points, :up, max_len: max_len)
   end
 
   defp build_module_index(beam_paths) do
