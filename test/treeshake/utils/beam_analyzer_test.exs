@@ -13,7 +13,7 @@ defmodule Treeshake.Utils.BeamAnalyzerTest do
       functions: functions,
       abstraction: opts[:abstraction],
       behaviour_impls: opts[:behaviour_impls] || [],
-      protocol_impls: opts[:protocol_impls] || []
+      protocol_impl: opts[:protocol_impl] || []
     }
   end
 
@@ -72,7 +72,6 @@ defmodule Treeshake.Utils.BeamAnalyzerTest do
       assert %PublicFunctionInfo{} = result.public_functions[{:foo, 0}]
       assert Map.has_key?(result.private_functions, {:bar, 0})
     end
-
   end
 
   describe "analyze/1 - public function call expansion" do

@@ -280,7 +280,7 @@ defmodule Treeshake.Utils.Graph do
     "#{mod}.#{f}/#{a}"
   end
 
-  defp node_label(node), do: to_string(node)
+  defp node_label(node), do: inspect(node)
 
   defp neighbors(graph, node, :down), do: Map.get(graph, node, [])
 

@@ -68,12 +68,14 @@ defmodule Treeshake.Utils.BeamRenamerTest do
       BeamRenamer.rename(beam("Elixir.DemoApp.Worker"), :"Elixir.DemoApp.ValidCheck", out)
 
       new_beam = Path.join(out, "Elixir.DemoApp.ValidCheck.beam")
+
       assert {:ok, :"Elixir.DemoApp.ValidCheck", _chunks} =
                :beam_lib.all_chunks(String.to_charlist(new_beam))
     end
 
     test "output is loadable by the runtime" do
       out = make_tmp_dir()
+
       on_exit(fn ->
         :code.purge(:"Elixir.DemoApp.Loadable")
         :code.delete(:"Elixir.DemoApp.Loadable")

@@ -147,19 +147,19 @@ defmodule Treeshake.Utils.BeamReaderTest do
   end
 
   describe "read/2 - implemented_protocols" do
-    test "protocol implementation module has :protocol_impls" do
+    test "protocol implementation module has :protocol_impl" do
       {:ok, info} = BeamReader.read(beam(DemoApp.Formatter.Integer))
-      assert {DemoApp.Formatter, Integer} in info.protocol_impls
+      assert info.protocol_impl == {DemoApp.Formatter, Integer}
     end
 
-    test ":protocol_impls is empty for a non-implementation module" do
+    test ":protocol_impl is nil for a non-implementation module" do
       {:ok, info} = BeamReader.read(beam(DemoApp.Worker))
-      assert info.protocol_impls == []
+      assert info.protocol_impl == nil
     end
 
-    test ":protocol_impls is empty for the protocol definition module itself" do
+    test ":protocol_impl is nil for the protocol definition module itself" do
       {:ok, info} = BeamReader.read(beam(DemoApp.Formatter))
-      assert info.protocol_impls == []
+      assert info.protocol_impl == nil
     end
   end
 
@@ -170,7 +170,7 @@ defmodule Treeshake.Utils.BeamReaderTest do
       assert info.module == DemoApp.Formatter
       assert info.abstraction == {:protocol, [{:format, 1}]}
       assert info.behaviour_impls == []
-      assert info.protocol_impls == []
+      assert info.protocol_impl == nil
     end
 
     test "format/1 is a public function" do
@@ -188,7 +188,7 @@ defmodule Treeshake.Utils.BeamReaderTest do
 
       assert info.module == DemoApp.Formatter.Integer
       assert info.abstraction == nil
-      assert info.protocol_impls == [{DemoApp.Formatter, Integer}]
+      assert info.protocol_impl == {DemoApp.Formatter, Integer}
       assert info.behaviour_impls == [DemoApp.Formatter]
     end
 

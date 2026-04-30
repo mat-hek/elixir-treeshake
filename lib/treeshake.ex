@@ -65,10 +65,11 @@ defmodule Treeshake do
       end
 
     ebin_files =
-      project_ebin_files ++
-        Keyword.get(opts, :ebin_files, []) ++
+      Keyword.get(opts, :ebin_files, []) ++
+        project_ebin_files ++
         if Keyword.get(opts, :copy_stdlibs, true), do: copy_stdlibs(tmp_dir), else: []
 
+    ebin_files = Enum.uniq_by(ebin_files, &Path.basename/1)
     opts = Keyword.put(opts, :ebin_files, ebin_files)
 
     Map.new(opts)
@@ -87,9 +88,10 @@ defmodule Treeshake do
   end
 
   defp find_ebin_files(build_dir) do
-    build_dir
-    |> Path.join("**/ebin/*")
-    |> Path.wildcard()
+    consolidated = build_dir |> Path.join("**/consolidated/*") |> Path.wildcard()
+    # consolidated = []
+    ebin = build_dir |> Path.join("**/ebin/*") |> Path.wildcard()
+    Enum.uniq_by(consolidated ++ ebin, &Path.basename/1)
   end
 
   defp copy_stdlibs(tmp_dir) do

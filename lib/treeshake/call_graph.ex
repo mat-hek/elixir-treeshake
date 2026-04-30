@@ -27,6 +27,21 @@ defmodule Treeshake.CallGraph do
     {Logger.Formatter, :new, 1}
   ]
 
+  @protocol_built_in_types [
+    Tuple,
+    Atom,
+    List,
+    BitString,
+    Integer,
+    Float,
+    Function,
+    PID,
+    Map,
+    Port,
+    Reference,
+    Any
+  ]
+
   @doc """
   Builds a call graph from the given BEAM files, seeded by `entry_points`.
 
@@ -44,6 +59,23 @@ defmodule Treeshake.CallGraph do
   def create(beam_paths, entry_points) do
     module_index = build_module_index(beam_paths)
 
+    protocols_impls =
+      Enum.flat_map(module_index, fn
+        {module, %{protocol_impl: {protocol, type}}} ->
+          {:protocol, _funs} =
+            Map.get_lazy(module_index, protocol, fn ->
+              raise "Module #{module} implements unknown protocol #{protocol}"
+            end).abstraction
+
+          [%{protocol: protocol, type: type, impl: module}]
+
+        _non_protocol ->
+          []
+      end)
+
+    protocols_impls_by_protocol = Enum.group_by(protocols_impls, & &1.protocol)
+    protocols_impls_by_type = Enum.group_by(protocols_impls, & &1.type)
+
     entry_points =
       Enum.flat_map(entry_points, fn
         {m, f, a} ->
@@ -54,53 +86,141 @@ defmodule Treeshake.CallGraph do
           |> Enum.map(fn {{f, a}, _info} -> {m, f, a} end)
       end)
 
-    Graph.bfs(@hardcoded_entry_points ++ entry_points, %{}, fn {m, f, a} = mfa, graph ->
-      {calls, potential_modules} =
-        with %{^m => %{public_functions: pub}} <- module_index,
-             %{calls: c, potential_modules: pm} <- Map.get(pub, {f, a}) do
-          {c, pm}
-        else
-          _ -> {[], []}
-        end
+    Graph.bfs(
+      @hardcoded_entry_points ++ entry_points,
+      %{
+        graph: %{},
+        protocol_calls: MapSet.new(),
+        referenced_modules: MapSet.new(@protocol_built_in_types)
+      },
+      fn
+        {m, f, a} = mfa, acc
+        when {f, a} in [impl_for: 1, impl_for!: 1] and is_map_key(protocols_impls_by_protocol, m) ->
+          entries = [{mfa, [{Code, :ensure_compiled, 1}, {Module, :concat, 2}]}]
+          acc = %{acc | graph: merge_graph(acc.graph, entries)}
+          {Enum.flat_map(entries, &value/1), acc}
 
-      referenced_modules_info =
-        Enum.flat_map(
-          potential_modules,
-          &case module_index[&1] do
-            nil -> []
-            info -> [info]
-          end
-        )
+        {m, f, a} = mfa, acc ->
+          %{
+            graph: graph,
+            protocol_calls: acc_protocol_calls,
+            referenced_modules: acc_referenced_modules
+          } = acc
 
-      behaviour_calls =
-        referenced_modules_info
-        |> Enum.flat_map(fn info ->
-          Enum.map(info.behaviour_impls ++ Keyword.keys(info.protocol_impls), &{info.module, &1})
-        end)
-        |> Enum.flat_map(fn {module, abstraction} ->
-          case module_index[abstraction] do
-            %{abstraction: {_type, callbacks}} -> callbacks
-            nil -> raise "Protocol or behaviour #{abstraction} not found"
-            _info -> raise "Expected #{abstraction} to be a protocol or behaviour, but it's not"
-          end
-          |> Enum.map(fn {f, a} -> {module, f, a} end)
-        end)
+          {calls, potential_modules} =
+            with %{^m => %{public_functions: pub}} <- module_index,
+                 %{calls: c, potential_modules: pm} <- Map.get(pub, {f, a}) do
+              {c, pm}
+            else
+              _ -> {[], []}
+            end
 
-      # When a module atom appears as a literal (e.g. passed to Supervisor.start_link),
-      # the supervisor will call child_spec/1 on it at runtime — add that edge explicitly.
-      child_spec_calls =
-        referenced_modules_info
-        |> Enum.filter(fn info -> Map.has_key?(info.public_functions, {:child_spec, 1}) end)
-        |> Enum.map(fn info -> {info.module, :child_spec, 1} end)
+          referenced_modules_info =
+            Enum.flat_map(
+              potential_modules,
+              &case module_index[&1] do
+                nil -> []
+                info -> [info]
+              end
+            )
 
-      hardcoded_calls = Map.get(@hardcoded_edges, m, [])
+          acc_referenced_modules =
+            MapSet.union(
+              acc_referenced_modules,
+              MapSet.new(referenced_modules_info, & &1.module)
+            )
 
-      all_calls =
-        Enum.uniq(calls ++ behaviour_calls ++ child_spec_calls ++ hardcoded_calls)
-        |> Enum.reject(&(&1 == mfa))
-        |> Enum.sort()
+          behaviour_calls =
+            referenced_modules_info
+            |> Enum.flat_map(fn info ->
+              Enum.map(info.behaviour_impls, &{info.module, &1})
+            end)
+            |> Enum.flat_map(fn {module, abstraction} ->
+              case module_index[abstraction] do
+                %{abstraction: {_type, callbacks}} ->
+                  callbacks
 
-      {all_calls, Map.put(graph, mfa, all_calls)}
+                nil ->
+                  raise "Protocol or behaviour #{abstraction} not found"
+
+                _info ->
+                  raise "Expected #{abstraction} to be a protocol or behaviour, but it's not"
+              end
+              |> Enum.map(fn {f, a} -> {module, f, a} end)
+            end)
+
+          # When a module atom appears as a literal (e.g. passed to Supervisor.start_link),
+          # the supervisor will call child_spec/1 on it at runtime — add that edge explicitly.
+          child_spec_calls =
+            referenced_modules_info
+            |> Enum.filter(fn info -> Map.has_key?(info.public_functions, {:child_spec, 1}) end)
+            |> Enum.map(fn info -> {info.module, :child_spec, 1} end)
+
+          hardcoded_calls = Map.get(@hardcoded_edges, m, [])
+
+          all_calls =
+            (calls ++ behaviour_calls ++ child_spec_calls ++ hardcoded_calls)
+            |> Enum.reject(&(&1 == mfa))
+
+          protocol_edges_from_calls =
+            all_calls
+            |> Enum.filter(fn {cm, cf, ca} ->
+              case get_in(module_index[cm].abstraction) do
+                {:protocol, funs} -> {cf, ca} in funs
+                _other -> false
+              end
+            end)
+            |> Enum.flat_map(fn {cm, cf, ca} ->
+              Map.fetch!(protocols_impls_by_protocol, cm)
+              |> Enum.filter(&(&1.type in acc_referenced_modules))
+              |> Enum.map(&{{&1.protocol, cf, ca}, {&1.impl, cf, ca}})
+            end)
+
+          acc_protocol_calls =
+            MapSet.union(acc_protocol_calls, MapSet.new(protocol_edges_from_calls, &key/1))
+
+          protocol_edges_from_modules =
+            referenced_modules_info
+            |> Enum.flat_map(fn info -> Map.get(protocols_impls_by_type, info.module, []) end)
+            |> Enum.flat_map(fn %{protocol: protocol, impl: impl} ->
+              Map.fetch!(module_index, impl).public_functions
+              |> Map.keys()
+              |> Enum.filter(fn {f, a} -> {protocol, f, a} in acc_protocol_calls end)
+              |> Enum.map(fn {f, a} -> {{protocol, f, a}, {impl, f, a}} end)
+            end)
+
+          protocol_entries =
+            Enum.group_by(
+              protocol_edges_from_modules ++ protocol_edges_from_calls,
+              &key/1,
+              &value/1
+            )
+
+          graph =
+            graph
+            |> merge_graph([{mfa, all_calls}])
+            |> merge_graph(protocol_entries)
+
+          acc = %{
+            graph: graph,
+            protocol_calls: acc_protocol_calls,
+            referenced_modules: acc_referenced_modules
+          }
+
+          {all_calls ++ Enum.flat_map(protocol_entries, &value/1), acc}
+      end
+    ).graph
+  end
+
+  defp merge_graph(graph, to_merge) do
+    Enum.reduce(to_merge, graph, fn {k, v}, acc ->
+      case Map.fetch(acc, k) do
+        {:ok, v2} -> v ++ v2
+        :error -> v
+      end
+      |> Enum.sort()
+      |> Enum.dedup()
+      |> then(&Map.put(acc, k, &1))
     end)
   end
 
@@ -121,4 +241,7 @@ defmodule Treeshake.CallGraph do
       {analysis.module, analysis}
     end)
   end
+
+  defp key({k, _v}), do: k
+  defp value({_k, v}), do: v
 end

@@ -22,7 +22,7 @@ defmodule Treeshake.Utils.BeamAnalyzer do
           private_functions: %{name_arity() => [name_arity()]},
           abstraction: {:behaviour | :protocol, [name_arity()]} | nil,
           behaviour_impls: [atom()],
-          protocol_impls: [{atom(), atom()}]
+          protocol_impl: {atom(), atom()} | nil
         }
 
   @doc """
@@ -35,7 +35,7 @@ defmodule Treeshake.Utils.BeamAnalyzer do
     * `:private_functions` — map from `{name, arity}` to the list of public
       `{name, arity}` pairs that transitively call that private function
 
-  Always includes `:abstraction`, `:behaviour_impls`, and `:protocol_impls`,
+  Always includes `:abstraction`, `:behaviour_impls`, and `:protocol_impl`,
   passed through from the input.
   """
   @spec analyze(BeamReader.module_info()) :: analysis()
@@ -58,7 +58,9 @@ defmodule Treeshake.Utils.BeamAnalyzer do
             all_fns
             |> Enum.flat_map(& &1.calls)
             |> Enum.map(&resolve_local(&1, module))
-            |> Enum.reject(fn {m, name, arity} -> m == module and Map.has_key?(priv_index, {name, arity}) end)
+            |> Enum.reject(fn {m, name, arity} ->
+              m == module and Map.has_key?(priv_index, {name, arity})
+            end)
             |> Enum.uniq(),
           potential_modules: all_fns |> Enum.flat_map(& &1.potential_modules) |> Enum.uniq(),
           matching_terms: all_fns |> Enum.flat_map(& &1.matching_terms) |> Enum.uniq()
@@ -86,7 +88,7 @@ defmodule Treeshake.Utils.BeamAnalyzer do
       private_functions: expanded_priv,
       abstraction: module_info.abstraction,
       behaviour_impls: module_info.behaviour_impls,
-      protocol_impls: module_info.protocol_impls
+      protocol_impl: module_info.protocol_impl
     }
   end
 

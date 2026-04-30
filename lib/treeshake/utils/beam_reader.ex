@@ -17,7 +17,7 @@ defmodule Treeshake.Utils.BeamReader do
           functions: [FunctionInfo.t()],
           abstraction: {:behaviour | :protocol, [name_arity()]} | nil,
           behaviour_impls: [atom()],
-          protocol_impls: [{atom(), atom()}]
+          protocol_impl: [{atom(), atom()}]
         }
 
   @doc """
@@ -44,7 +44,7 @@ defmodule Treeshake.Utils.BeamReader do
 
   `:abstraction` is `{:protocol, callbacks}` for `defprotocol` modules,
   `{:behaviour, callbacks}` for behaviour definitions, and `nil` otherwise.
-  `:protocol_impls` is non-empty only for `defimpl` modules.
+  `:protocol_impl` is non-empty only for `defimpl` modules.
 
   Returns `{:ok, module_info()}` or `:error`.
   """
@@ -76,7 +76,7 @@ defmodule Treeshake.Utils.BeamReader do
     exports = collect_exports(core)
     callbacks = collect_callbacks(core)
     behaviours = collect_behaviours(core)
-    protocol_impls = collect_protocol_impls(core)
+    protocol_impl = collect_protocol_impl(core)
     is_protocol = protocol_definition?(core)
     functions = collect_functions(core, exports, filter)
 
@@ -93,7 +93,7 @@ defmodule Treeshake.Utils.BeamReader do
        functions: functions,
        abstraction: abstraction,
        behaviour_impls: behaviours,
-       protocol_impls: protocol_impls
+       protocol_impl: protocol_impl
      }}
   end
 
@@ -152,18 +152,17 @@ defmodule Treeshake.Utils.BeamReader do
     end)
   end
 
-  defp collect_protocol_impls({:c_module, _, _, _, _, defs}) do
-    case Enum.find(defs, fn
-           {{:c_var, _, {:__impl__, 1}}, _} -> true
-           _ -> false
-         end) do
-      {_, {:c_fun, _, _, body}} ->
-        protocol = find_impl_value(body, :protocol)
-        for_type = find_impl_value(body, :for)
-        if protocol && for_type, do: [{protocol, for_type}], else: []
+  defp collect_protocol_impl({:c_module, _, _, _, _, defs}) do
+    protocol_impl =
+      Enum.find(defs, fn
+        {{:c_var, _, {:__impl__, 1}}, _} -> true
+        _ -> false
+      end)
 
-      nil ->
-        []
+    with {_, {:c_fun, _, _, body}} <- protocol_impl do
+      protocol = find_impl_value(body, :protocol)
+      for_type = find_impl_value(body, :for)
+      if protocol && for_type, do: {protocol, for_type}, else: nil
     end
   end
 

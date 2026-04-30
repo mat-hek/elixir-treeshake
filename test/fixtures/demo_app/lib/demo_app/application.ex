@@ -8,6 +8,7 @@ defmodule DemoApp.Application do
       result = DemoApp.Worker.process("hello")
       IO.puts("Worker result: #{result}")
       DemoApp.Behaviour.call_hello(DemoApp.BehaviourImpl)
+      DemoApp.ProtocolUser.run()
       {:ok, sup}
     rescue
       e ->

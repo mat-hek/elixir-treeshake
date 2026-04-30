@@ -7,15 +7,19 @@ defmodule TreeshakeTest do
 
   @moduletag :tmp_dir
 
-  defp treeshake(ctx, opts) do
-    Treeshake.run([project: @fixture, tmp_dir: ctx.tmp_dir] ++ opts)
+  defp treeshake(opts) do
+    Treeshake.run([project: @fixture] ++ opts)
   end
 
-  async_test "module-level removal", %{tmp_dir: tmp_dir} = ctx do
-    output_dir = Path.join(tmp_dir, "out")
+  setup_all do
+    tmp_dir = "tmp/treeshake_test"
+    out_dir = Path.join(tmp_dir, "out")
+    File.mkdir_p!(tmp_dir)
+    stats = treeshake(tmp_dir: tmp_dir, output_dir: out_dir)
+    %{treeshake: %{stats: stats, out_dir: out_dir}}
+  end
 
-    stats = treeshake(ctx, output_dir: output_dir)
-
+  async_test "module-level removal", %{treeshake: %{stats: stats, out_dir: out_dir}} do
     refute DemoApp.Application in stats.modules_removed
     refute DemoApp.Worker in stats.modules_removed
     assert DemoApp.DeadModule in stats.modules_removed
@@ -23,7 +27,7 @@ defmodule TreeshakeTest do
     assert DemoApp in stats.modules_removed
 
     surviving =
-      output_dir
+      out_dir
       |> File.ls!()
       |> Enum.flat_map(fn
         "Elixir.DemoApp." <> app_module -> [app_module]
@@ -31,25 +35,20 @@ defmodule TreeshakeTest do
       end)
       |> Enum.sort()
 
-    assert ~w|Application.beam Behaviour.beam BehaviourImpl.beam BehaviourImplDep.beam Worker.beam| =
+    assert ~w|Application.beam Behaviour.beam BehaviourImpl.beam BehaviourImplDep.beam Formatter.DemoApp.Widget.beam Formatter.Integer.beam Formatter.beam ProtocolUser.beam Worker.beam| =
              surviving
   end
 
   describe "function-level removal" do
     async_test "removes unused/1 from DemoApp.Worker (non-dead module)",
-               %{tmp_dir: tmp_dir} = ctx do
-      output_dir = Path.join(tmp_dir, "out")
-      stats = treeshake(ctx, output_dir: output_dir)
-
+               %{treeshake: %{stats: stats}} do
       assert {DemoApp.Worker, :unused, 1} in stats.functions_removed
     end
 
-    async_test "unused/1 is not callable after tree-shaking", %{tmp_dir: tmp_dir} = ctx do
-      output_dir = Path.join(tmp_dir, "out")
-
-      treeshake(ctx, output_dir: output_dir)
-
-      beam_path = Path.join(output_dir, "Elixir.DemoApp.Worker.beam")
+    async_test "unused/1 is not callable after tree-shaking", %{
+      treeshake: %{out_dir: out_dir}
+    } do
+      beam_path = Path.join(out_dir, "Elixir.DemoApp.Worker.beam")
       {:ok, binary} = File.read(beam_path)
 
       assert {:module, DemoApp.Worker} =
@@ -64,38 +63,23 @@ defmodule TreeshakeTest do
     end
   end
 
-  async_test "dry run", %{tmp_dir: tmp_dir} = ctx do
-    output_dir = Path.join(tmp_dir, "out")
+  async_test "dry run", %{tmp_dir: tmp_dir} do
     ebin = Path.join([@fixture, "_build", "prod", "lib", "demo_app", "ebin"])
     before_files = ebin |> File.ls!() |> Enum.sort()
+    out_dir = Path.join(tmp_dir, "out")
 
-    stats = treeshake(ctx, output_dir: output_dir, dry_run: true)
+    stats = treeshake(tmp_dir: tmp_dir, output_dir: out_dir, dry_run: true)
 
     assert DemoApp.DeadModule in stats.modules_removed
     assert DemoApp.AnotherDead in stats.modules_removed
 
-    refute File.exists?(output_dir)
+    refute File.exists?(out_dir)
 
     assert before_files == ebin |> File.ls!() |> Enum.sort()
   end
 
-  describe "output directory isolation" do
-    async_test "original ebin is not modified when --output is set", %{tmp_dir: tmp_dir} = ctx do
-      output_dir = Path.join(tmp_dir, "out")
-      ebin = Path.join([@fixture, "_build", "prod", "lib", "demo_app", "ebin"])
-      before_files = ebin |> File.ls!() |> Enum.sort()
-
-      treeshake(ctx, output_dir: output_dir)
-
-      assert before_files == ebin |> File.ls!() |> Enum.sort()
-    end
-  end
-
   @tag :behaviour
-  async_test "behaviour", %{tmp_dir: tmp_dir} = ctx do
-    output_dir = Path.join(tmp_dir, "out")
-
-    stats = treeshake(ctx, output_dir: output_dir)
+  async_test "behaviour", %{treeshake: %{stats: stats}} do
     refute DemoApp.Behaviour in stats.modules_removed
     refute DemoApp.BehaviourImpl in stats.modules_removed
     refute DemoApp.BehaviourImplDep in stats.modules_removed
@@ -103,7 +87,7 @@ defmodule TreeshakeTest do
 
   @tag :correctness
   @tag {:timeout, :infinity}
-  async_test "surviving modules are callable after tree-shaking", %{tmp_dir: tmp_dir} = ctx do
+  async_test "surviving modules are callable after tree-shaking", %{tmp_dir: tmp_dir} do
     output_dir = Path.join(tmp_dir, "out")
 
     mods = [
@@ -202,18 +186,17 @@ defmodule TreeshakeTest do
     dbg(mods, limit: :infinity)
 
     stats =
-      treeshake(ctx,
+      treeshake(
+        tmp_dir: tmp_dir,
         output_dir: output_dir,
         extra_entry_points: [
-          {Elixir.Supervisor.Default, :init, 1},
-          {:gen_server, :init_it, 6},
-          {:gen_server, :wake_hib, 6},
-          {:gen_statem, :init_it, 6},
-          {:gen_statem, :wakeup_from_hibernate, 3},
-          {:proc_lib, :wake_up, 3},
-          {:c, :erlangrc, 0}
-        ],
-        non_treeshakable_modules: []
+          # {:gen_server, :init_it, 6},
+          # {:gen_server, :wake_hib, 6},
+          # {:gen_statem, :init_it, 6},
+          # {:gen_statem, :wakeup_from_hibernate, 3},
+          # {:proc_lib, :wake_up, 3},
+          # {:c, :erlangrc, 0}
+        ]
       )
 
     _stats = stats

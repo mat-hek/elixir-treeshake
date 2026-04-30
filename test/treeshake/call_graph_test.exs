@@ -8,7 +8,11 @@ defmodule Treeshake.CallGraphTest do
         extra_entry_points: [{Elixir.Supervisor.Default, :init, 1}]
       )
 
-    File.write!("test/fixtures/call_graph.bin", :erlang.term_to_binary(graph))
+    if Application.get_env(:treeshake, :resnapshot) do
+      graph_bin = :erlang.term_to_binary(graph, [:deterministic])
+      File.write!("test/fixtures/call_graph.bin", graph_bin)
+    end
+
     {:ok, graph: graph}
   end
 
@@ -77,6 +81,55 @@ defmodule Treeshake.CallGraphTest do
     end
   end
 
+  # ---- protocol edges ----
+
+  describe "build_call_graph/1 - protocol edges" do
+    test "protocol dispatch key is a graph node when protocol is called from reachable code",
+         %{graph: graph} do
+      # ProtocolUser.run/0 calls DemoApp.Formatter.format/1, so the protocol
+      # dispatch key must appear as a graph node.
+      assert Map.has_key?(graph, {DemoApp.Formatter, :format, 1})
+    end
+
+    test "implementation for a built-in type is reachable when protocol is called",
+         %{graph: graph} do
+      # Integer is always in referenced_modules (built-in type), so the Integer
+      # implementation must be in the dispatch node's call list and be reachable.
+      calls = graph[{DemoApp.Formatter, :format, 1}]
+      assert {DemoApp.Formatter.Integer, :format, 1} in calls
+      assert Map.has_key?(graph, {DemoApp.Formatter.Integer, :format, 1})
+    end
+
+    test "implementation for a referenced struct type is reachable",
+         %{graph: graph} do
+      # ProtocolUser.run/0 creates a %DemoApp.Widget{} struct literal, so
+      # DemoApp.Widget appears in potential_modules and becomes a referenced module.
+      # The Widget implementation must therefore be in the dispatch node and reachable.
+      calls = graph[{DemoApp.Formatter, :format, 1}]
+      assert {DemoApp.Formatter.DemoApp.Widget, :format, 1} in calls
+      assert Map.has_key?(graph, {DemoApp.Formatter.DemoApp.Widget, :format, 1})
+    end
+
+    test "implementation for an unreferenced struct type is not reachable",
+         %{graph: graph} do
+      # DemoApp.Gadget is never mentioned in any reachable function, so its
+      # Formatter implementation must not appear in the graph at all.
+      refute Map.has_key?(graph, {DemoApp.Formatter.DemoApp.Gadget, :format, 1})
+    end
+
+    test "impl_for/1 dispatch node has only implementation nodes as calls (not further protocol calls)",
+         %{graph: graph} do
+      # impl_for/1 is skipped during BFS traversal so no further edges are
+      # generated FROM it. Its call list only contains the per-implementation
+      # impl_for/1 nodes added via the protocol chunk (not arbitrary sub-calls).
+      calls = Map.get(graph, {DemoApp.Formatter, :impl_for, 1}, [])
+
+      assert Enum.all?(calls, fn {m, f, a} ->
+               f == :impl_for and a == 1 and m != DemoApp.Formatter
+             end)
+    end
+  end
+
   # ---- BFS termination and cycle safety ----
 
   describe "build_call_graph/1 - BFS termination" do
@@ -87,6 +140,22 @@ defmodule Treeshake.CallGraphTest do
     test "each reachable node appears as a key exactly once", %{graph: graph} do
       keys = Map.keys(graph)
       assert keys == Enum.uniq(keys)
+    end
+  end
+
+  defguardp is_mfa(mfa)
+            when is_tuple(mfa) and tuple_size(mfa) == 3 and is_atom(elem(mfa, 0)) and
+                   is_atom(elem(mfa, 1)) and is_integer(elem(mfa, 2))
+
+  test "graph structure is correct", %{graph: graph} do
+    for entry <- graph do
+      assert {mfa, calls} = entry
+      assert is_mfa(mfa)
+      assert is_list(calls)
+
+      for call <- calls do
+        assert is_mfa(call)
+      end
     end
   end
 
