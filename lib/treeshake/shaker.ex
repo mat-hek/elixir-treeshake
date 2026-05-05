@@ -10,29 +10,42 @@ defmodule Treeshake.Shaker do
     impl_for: 1
   ]
 
-  def shake(all_beams, cg, opts) do
+  [{_name, module_stub}] =
+    quote do
+      defmodule Treeshake.EmptyModuleStub do
+      end
+    end
+    |> Code.compile_quoted()
+
+  @module_stub module_stub
+
+  def shake(ebin_files, cg, opts) do
     non_treeshakable_modules = Map.get(opts, :non_treeshakable_modules, [])
-    stub_removed = Map.get(opts, :stub_removed, false)
+    stub_removed_functions = Map.get(opts, :stub_removed_functions, false)
+    stub_removed_modules = Map.get(opts, :stub_removed_modules, false)
 
     non_treeshakable_modules =
       MapSet.new(non_treeshakable_modules ++ non_treeshakable_stdlib_modules())
 
     output_dir = Map.get(opts, :output_dir)
 
-    all_beams =
+    ebin_files =
       if opts.dry_run or output_dir == nil do
-        all_beams
+        ebin_files
       else
         File.mkdir_p!(output_dir)
 
-        Enum.map(all_beams, fn src ->
+        Enum.map(ebin_files, fn src ->
           output_path = Path.join(output_dir, Path.basename(src))
           File.copy!(src, output_path)
           output_path
         end)
       end
 
-    all_beams = Enum.reject(all_beams, &(beam_module(&1) in non_treeshakable_modules))
+    beams =
+      ebin_files
+      |> Enum.filter(&(Path.extname(&1) == ".beam"))
+      |> Enum.reject(&(beam_module(&1) in non_treeshakable_modules))
 
     reachable_mods_funs =
       cg
@@ -41,7 +54,7 @@ defmodule Treeshake.Shaker do
 
     reachable_mods = MapSet.new(reachable_mods_funs, fn {m, _fa} -> m end)
 
-    {to_shake, to_remove} = Enum.split_with(all_beams, &(beam_module(&1) in reachable_mods))
+    {to_shake, to_remove} = Enum.split_with(beams, &(beam_module(&1) in reachable_mods))
 
     functions_removed =
       process_async(
@@ -53,8 +66,8 @@ defmodule Treeshake.Shaker do
         end
       )
 
-    {to_remove, functions_removed} =
-      if stub_removed do
+    {beams_removed, functions_removed} =
+      if stub_removed_functions do
         functions_stubbed =
           process_async(to_remove, fn path ->
             {shaked, functions_removed} =
@@ -70,9 +83,20 @@ defmodule Treeshake.Shaker do
         {to_remove, functions_removed}
       end
 
+    beams_removed =
+      if stub_removed_modules do
+        for beam <- beams_removed do
+          Treeshake.Utils.BeamRenamer.rename(@module_stub, beam_module(beam), output_dir)
+        end
+
+        []
+      else
+        beams_removed
+      end
+
     %{
-      modules_removed: to_remove |> Enum.map(&beam_module/1) |> Enum.sort(),
-      beams_removed: to_remove |> Enum.sort(),
+      modules_removed: beams_removed |> Enum.map(&beam_module/1) |> Enum.sort(),
+      beams_removed: beams_removed |> Enum.sort(),
       functions_removed:
         functions_removed
         |> Enum.flat_map(fn {m, fa} ->
@@ -80,7 +104,8 @@ defmodule Treeshake.Shaker do
         end)
         |> Enum.sort(),
       modules_rewritten: to_shake |> Enum.map(&beam_module/1) |> Enum.sort(),
-      modules_ignored: non_treeshakable_modules |> Enum.sort()
+      modules_ignored: non_treeshakable_modules |> Enum.sort(),
+      output_dir: output_dir
     }
   end
 

@@ -389,6 +389,21 @@ defmodule Treeshake.Utils.BeamReader do
     tuple |> Tuple.to_list() |> Enum.flat_map(&collect_literal_atoms/1)
   end
 
+  # External function reference stored as a literal, e.g. &Logger.default_formatter/0
+  # compiled as {:c_literal, _, &Logger.default_formatter/0}.
+  defp collect_literal_atoms(v) when is_function(v) do
+    case :erlang.fun_info(v, :type) do
+      {:type, :external} ->
+        {:module, m} = :erlang.fun_info(v, :module)
+        {:name, f} = :erlang.fun_info(v, :name)
+        {:arity, a} = :erlang.fun_info(v, :arity)
+        [{m, f, a}]
+
+      _ ->
+        []
+    end
+  end
+
   defp collect_literal_atoms(_), do: []
 
   defp mfa_arity({:c_literal, _, a}) when is_integer(a) and a >= 0, do: {:ok, a}

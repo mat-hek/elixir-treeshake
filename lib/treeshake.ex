@@ -4,14 +4,10 @@ defmodule Treeshake do
   def run(opts \\ []) do
     opts = parse_opts(opts)
 
-    beams = filter_ext(opts.ebin_files, ".beam")
-
     call_graph = Map.get_lazy(opts, :call_graph, fn -> do_build_call_graph(opts) end)
-    # dbg(call_graph, limit: :infinity)
-    # dbg(Treeshake.CallGraph.explain(call_graph, Calendar.ISO))
 
     IO.puts("rewriting")
-    stats = Treeshake.Shaker.shake(beams, call_graph, opts)
+    stats = Treeshake.Shaker.shake(opts.ebin_files, call_graph, opts)
 
     stats
   end
