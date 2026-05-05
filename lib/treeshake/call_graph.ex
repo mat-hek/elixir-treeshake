@@ -62,10 +62,12 @@ defmodule Treeshake.CallGraph do
     protocols_impls =
       Enum.flat_map(module_index, fn
         {module, %{protocol_impl: {protocol, type}}} ->
-          {:protocol, _funs} =
-            Map.get_lazy(module_index, protocol, fn ->
-              raise "Module #{module} implements unknown protocol #{protocol}"
-            end).abstraction
+          Map.get_lazy(module_index, protocol, fn ->
+            raise "Module #{module} implements unknown protocol #{protocol}"
+          end)
+          |> unless do
+            raise "Module #{module} implements #{protocol} as if it was a protocol, but it's not"
+          end
 
           [%{protocol: protocol, type: type, impl: module}]
 
@@ -134,9 +136,14 @@ defmodule Treeshake.CallGraph do
           end)
           |> Enum.flat_map(fn {module, behaviour} ->
             case module_index[behaviour] do
-              %{abstraction: {:behaviour, callbacks}} -> callbacks
-              nil -> raise "Behaviour #{behaviour} not found"
-              _info -> raise "Expected #{behaviour} to be a behaviour, but it's not"
+              %{abstraction: {:behaviour, callbacks}} ->
+                callbacks
+
+              nil ->
+                raise "Module #{module} implements unknown behaviour #{behaviour}"
+
+              _info ->
+                raise "Module #{module} implements #{behaviour} as if it was a behaviour, but it's not"
             end
             |> Enum.map(fn {f, a} -> {module, f, a} end)
           end)

@@ -189,7 +189,7 @@ defmodule Treeshake.Utils.BeamReaderTest do
       assert info.module == DemoApp.Formatter.Integer
       assert info.abstraction == nil
       assert info.protocol_impl == {DemoApp.Formatter, Integer}
-      assert info.behaviour_impls == [DemoApp.Formatter]
+      assert info.behaviour_impls == []
     end
 
     test "format/1 is a public function" do

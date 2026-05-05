@@ -75,8 +75,17 @@ defmodule Treeshake.Utils.BeamReader do
   defp do_read(module, core, filter) do
     exports = collect_exports(core)
     callbacks = collect_callbacks(core)
-    behaviours = collect_behaviours(core)
     protocol_impl = collect_protocol_impl(core)
+    behaviours = collect_behaviours(core)
+
+    # Protocol implementations have a :behaviour attr pointing to the protocol,
+    # but that is already captured in protocol_impl — exclude it from behaviour_impls.
+    behaviours =
+      case protocol_impl do
+        {protocol, _type} -> List.delete(behaviours, protocol)
+        nil -> behaviours
+      end
+
     is_protocol = protocol_definition?(core)
     functions = collect_functions(core, exports, filter)
 
