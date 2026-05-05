@@ -332,6 +332,13 @@ defmodule Treeshake.Utils.BeamReader do
     collect_literal_atoms(v)
   end
 
+  # Case/function clause: only collect from the body, not from patterns or guard.
+  # Atoms used as pattern match literals or guard values are not module
+  # references and must not pollute potential_modules.
+  defp collect_calls({:c_clause, _, _patterns, _guard, body}) do
+    collect_calls(body)
+  end
+
   # c_letrec: skip the function variable names in the definitions — they are
   # local definitions, not call sites. Process only the function bodies and the
   # outer continuation body.

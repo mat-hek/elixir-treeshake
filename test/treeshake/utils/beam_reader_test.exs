@@ -272,6 +272,47 @@ defmodule Treeshake.Utils.BeamReaderTest do
     end
   end
 
+  describe "read/2 - potential_modules excludes pattern match and guard atoms" do
+    test "function-head pattern atom is absent from potential_modules" do
+      {:ok, info} = BeamReader.read(beam(DemoApp.PatternMatcher))
+      check = find_fun(info.functions, :check, 1)
+
+      refute :head_pattern_only in check.potential_modules
+    end
+
+    test "function-head guard atom is absent from potential_modules" do
+      {:ok, info} = BeamReader.read(beam(DemoApp.PatternMatcher))
+      guarded = find_fun(info.functions, :guarded, 1)
+
+      refute :head_guard_only in guarded.potential_modules
+    end
+
+    test "case-clause pattern atom in function body is absent from potential_modules" do
+      {:ok, info} = BeamReader.read(beam(DemoApp.PatternMatcher))
+      classify = find_fun(info.functions, :classify, 1)
+
+      refute :case_pattern_only in classify.potential_modules
+    end
+
+    test "case-clause guard atom in function body is absent from potential_modules" do
+      {:ok, info} = BeamReader.read(beam(DemoApp.PatternMatcher))
+      filter = find_fun(info.functions, :filter, 1)
+
+      refute :case_guard_only in filter.potential_modules
+    end
+
+    test "atoms in clause bodies are still collected into potential_modules" do
+      {:ok, info} = BeamReader.read(beam(DemoApp.PatternMatcher))
+      check = find_fun(info.functions, :check, 1)
+      classify = find_fun(info.functions, :classify, 1)
+
+      assert :head_result in check.potential_modules or :other_result in check.potential_modules
+
+      assert :classified in classify.potential_modules or
+               :unclassified in classify.potential_modules
+    end
+  end
+
   @tag :task
   test "hardcoded MFA tuple {Mod, :fun, arity} appears in calls" do
     {:ok, info} = BeamReader.read("test/fixtures/ebin/Elixir.Task.beam")
