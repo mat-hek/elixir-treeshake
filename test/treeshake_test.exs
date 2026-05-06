@@ -105,45 +105,19 @@ defmodule TreeshakeTest do
   async_test "surviving modules are callable after tree-shaking", %{tmp_dir: tmp_dir} do
     output_dir = Path.join(tmp_dir, "out")
 
-    stats =
-      treeshake(
-        tmp_dir: tmp_dir,
-        output_dir: output_dir,
-        stub_removed_modules: true
-      )
-
-    _stats = stats
-    # dbg(stats.modules_removed, limit: :infinity)
-
-    # dbg_rem = stats.functions_removed |> Enum.filter(fn {m, _f, _a} -> m == :gen end)
-    # dbg(dbg_rem, limit: :infinity)
+    treeshake(
+      tmp_dir: tmp_dir,
+      output_dir: output_dir,
+      stub_removed_modules: true,
+      add_runner_module: true
+    )
 
     erl = Path.join([:code.root_dir() |> to_string(), "bin", "erl"])
-
-    [{TreeshakeRunner, binary}] =
-      Code.compile_quoted(
-        quote do
-          defmodule TreeshakeRunner do
-            def start do
-              case :application.ensure_all_started(:demo_app) do
-                {:ok, _apps} ->
-                  :erlang.halt(0)
-
-                error ->
-                  :erlang.display(error)
-                  :erlang.halt(1)
-              end
-            end
-          end
-        end
-      )
-
-    File.write!(Path.join(output_dir, "Elixir.TreeshakeRunner.beam"), binary)
 
     {output, exit_code} =
       System.cmd(
         erl,
-        ~w|-noshell -noinput -pa #{output_dir} -run Elixir.TreeshakeRunner|,
+        ~w|-noshell -noinput -pa #{output_dir} -run treeshake_boot start demo_app|,
         stderr_to_stdout: true
       )
 

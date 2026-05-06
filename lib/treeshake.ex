@@ -9,6 +9,11 @@ defmodule Treeshake do
     IO.puts("rewriting")
     stats = Treeshake.Shaker.shake(opts.ebin_files, call_graph, opts)
 
+    if opts[:add_runner_module] do
+      runner_path = :code.which(:treeshake_boot)
+      File.cp!(runner_path, Path.join(opts.output_dir, Path.basename(runner_path)))
+    end
+
     stats
   end
 
