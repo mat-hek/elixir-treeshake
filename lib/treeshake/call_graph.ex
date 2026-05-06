@@ -230,7 +230,7 @@ defmodule Treeshake.CallGraph do
   end
 
   defp build_module_index(beam_paths) do
-    Map.new(beam_paths, fn path ->
+    process_async(beam_paths, fn path ->
       analysis =
         path
         |> BeamReader.read!()
@@ -245,6 +245,12 @@ defmodule Treeshake.CallGraph do
 
       {analysis.module, analysis}
     end)
+  end
+
+  defp process_async(enum, fun) do
+    enum
+    |> Task.async_stream(fun, ordered: false, timeout: 15_000)
+    |> Map.new(fn {:ok, result} -> result end)
   end
 
   defp key({k, _v}), do: k
