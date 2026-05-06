@@ -60,7 +60,9 @@ defmodule Treeshake.Shaker do
       process_async(
         to_shake,
         fn path ->
-          {shaked, functions_removed} = do_shake(path, reachable_mods_funs)
+          {shaked, functions_removed} =
+            do_shake(path, reachable_mods_funs, stub_removed_functions)
+
           unless opts.dry_run, do: File.write!(path, shaked)
           {beam_module(path), functions_removed}
         end
@@ -109,7 +111,7 @@ defmodule Treeshake.Shaker do
     }
   end
 
-  defp do_shake(path, reachable_mods_funs) do
+  defp do_shake(path, reachable_mods_funs, stub_removed_functions) do
     analysis =
       path |> Treeshake.Utils.BeamReader.read!() |> Treeshake.Utils.BeamAnalyzer.analyze()
 
@@ -121,7 +123,9 @@ defmodule Treeshake.Shaker do
         if Enum.any?(called_by, &(&1 in reachable_mapset)), do: [fun], else: []
       end)
 
-    Treeshake.Utils.BeamRewriter.keep_funs(path, reachable_funs ++ reachable_privs)
+    Treeshake.Utils.BeamRewriter.keep_funs(path, reachable_funs ++ reachable_privs,
+      stub_removed_public: stub_removed_functions
+    )
   end
 
   defp non_treeshakable_stdlib_modules() do

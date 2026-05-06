@@ -108,8 +108,7 @@ defmodule TreeshakeTest do
     treeshake(
       tmp_dir: tmp_dir,
       output_dir: output_dir,
-      stub_removed_modules: true,
-      add_runner_module: true
+      stub_removed_modules: true
     )
 
     erl = Path.join([:code.root_dir() |> to_string(), "bin", "erl"])
@@ -117,7 +116,7 @@ defmodule TreeshakeTest do
     {output, exit_code} =
       System.cmd(
         erl,
-        ~w|-noshell -noinput -pa #{output_dir} -run treeshake_boot start demo_app|,
+        ~w|-noshell -noinput -pa #{output_dir} -run treeshake_helper start demo_app|,
         stderr_to_stdout: true
       )
 

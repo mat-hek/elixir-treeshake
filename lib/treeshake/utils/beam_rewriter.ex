@@ -76,8 +76,8 @@ defmodule Treeshake.Utils.BeamRewriter do
     vars = for i <- 0..(farity - 1)//1, do: {:c_var, [], :"_V#{i}"}
 
     body =
-      {:c_call, [], {:c_literal, [], :"Elixir.Treeshake.TreeshakedError"},
-       {:c_literal, [], :trigger},
+      {:c_call, [], {:c_literal, [], :treeshake_helper},
+       {:c_literal, [], :raise_treeshaked_error},
        [{:c_literal, [], module}, {:c_literal, [], fname}, {:c_literal, [], farity}]}
 
     {{:c_var, [], {fname, farity}}, {:c_fun, [], vars, body}}

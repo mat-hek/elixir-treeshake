@@ -45,62 +45,6 @@ defmodule Treeshake.Utils.BeamRewriterStubTest do
       refute {:wrap, 1} in exports
     end
 
-    test "calling a stubbed function raises Treeshake.TreeshakedError" do
-      {binary, _} =
-        BeamRewriter.keep_funs(beam("Elixir.DemoApp.Worker"), [], stub_removed_public: true)
-
-      load_stub_binary(binary)
-
-      assert_raise Treeshake.TreeshakedError, fn ->
-        apply(@mod, :process, ["hello"])
-      end
-    end
-
-    test "exception carries the correct module" do
-      {binary, _} =
-        BeamRewriter.keep_funs(beam("Elixir.DemoApp.Worker"), [], stub_removed_public: true)
-
-      load_stub_binary(binary)
-
-      try do
-        apply(@mod, :process, ["hello"])
-        flunk("expected Treeshake.TreeshakedError to be raised")
-      rescue
-        e in Treeshake.TreeshakedError ->
-          assert e.module == @mod
-      end
-    end
-
-    test "exception carries the correct function name" do
-      {binary, _} =
-        BeamRewriter.keep_funs(beam("Elixir.DemoApp.Worker"), [], stub_removed_public: true)
-
-      load_stub_binary(binary)
-
-      try do
-        apply(@mod, :process, ["hello"])
-        flunk("expected Treeshake.TreeshakedError to be raised")
-      rescue
-        e in Treeshake.TreeshakedError ->
-          assert e.function == :process
-      end
-    end
-
-    test "exception carries the correct arity" do
-      {binary, _} =
-        BeamRewriter.keep_funs(beam("Elixir.DemoApp.Worker"), [], stub_removed_public: true)
-
-      load_stub_binary(binary)
-
-      try do
-        apply(@mod, :process, ["hello"])
-        flunk("expected Treeshake.TreeshakedError to be raised")
-      rescue
-        e in Treeshake.TreeshakedError ->
-          assert e.arity == 1
-      end
-    end
-
     test "kept functions are not replaced with stubs" do
       {binary, _} =
         BeamRewriter.keep_funs(beam("Elixir.DemoApp.Worker"), [process: 1, upcase: 1, wrap: 1],

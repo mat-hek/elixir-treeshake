@@ -24,7 +24,6 @@ defmodule Treeshake.CallGraph do
   }
 
   @hardcoded_entry_points [
-    {Logger.Formatter, :new, 1}
     # {:gen_server, :init_it, 6},
     # {:gen_server, :wake_hib, 6},
     # {:gen_statem, :init_it, 6},
