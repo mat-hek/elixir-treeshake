@@ -13,9 +13,6 @@ defmodule Treeshake.CallGraph do
   """
 
   alias Treeshake.Utils.Graph
-  alias Treeshake.Utils.BeamReader
-  alias Treeshake.Utils.BeamAnalyzer
-
   @type mfa_tuple :: {atom(), atom(), non_neg_integer()}
   @type graph :: %{mfa_tuple() => [mfa_tuple()]}
 
@@ -61,9 +58,7 @@ defmodule Treeshake.CallGraph do
   BEAM files that cannot be read (no debug info, corrupt, etc.) are skipped.
   """
   @spec create([Path.t()], [mfa_tuple()]) :: graph()
-  def create(beam_paths, entry_points) do
-    module_index = build_module_index(beam_paths)
-
+  def create(module_index, entry_points) do
     protocols_impls =
       Enum.flat_map(module_index, fn
         {module, %{protocol_impl: {protocol, type}}} ->
@@ -226,30 +221,6 @@ defmodule Treeshake.CallGraph do
       |> Enum.dedup()
       |> then(&Map.put(acc, k, &1))
     end)
-  end
-
-  defp build_module_index(beam_paths) do
-    process_async(beam_paths, fn path ->
-      analysis =
-        path
-        |> BeamReader.read!()
-        |> case do
-          %{module: :application_controller} = info ->
-            %{info | behaviour_impls: [:gen_server | info.behaviour_impls]}
-
-          info ->
-            info
-        end
-        |> BeamAnalyzer.analyze()
-
-      {analysis.module, analysis}
-    end)
-  end
-
-  defp process_async(enum, fun) do
-    enum
-    |> Task.async_stream(fun, ordered: false, timeout: 15_000)
-    |> Map.new(fn {:ok, result} -> result end)
   end
 
   defp key({k, _v}), do: k

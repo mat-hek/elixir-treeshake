@@ -34,6 +34,7 @@ defmodule TreeshakeTest do
     )
   end
 
+  @tag :module_removal
   async_test "module-level removal", ctx do
     stats = get_stats(ctx)
     refute DemoApp.Application in stats.modules_removed

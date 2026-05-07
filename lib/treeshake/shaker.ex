@@ -19,7 +19,7 @@ defmodule Treeshake.Shaker do
 
   @module_stub module_stub
 
-  def shake(ebin_files, cg, opts) do
+  def shake(opts, call_graph, module_index) do
     non_treeshakable_modules = Map.get(opts, :non_treeshakable_modules, [])
     stub_removed_functions = Map.get(opts, :stub_removed_functions, false)
     stub_removed_modules = Map.get(opts, :stub_removed_modules, false)
@@ -31,11 +31,11 @@ defmodule Treeshake.Shaker do
 
     ebin_files =
       if opts.dry_run or output_dir == nil do
-        ebin_files
+        opts.ebin_files
       else
         File.mkdir_p!(output_dir)
 
-        Enum.map(ebin_files, fn src ->
+        Enum.map(opts.ebin_files, fn src ->
           output_path = Path.join(output_dir, Path.basename(src))
           File.copy!(src, output_path)
           output_path
@@ -48,7 +48,7 @@ defmodule Treeshake.Shaker do
       |> Enum.reject(&(beam_module(&1) in non_treeshakable_modules))
 
     reachable_mods_funs =
-      cg
+      call_graph
       |> Enum.flat_map(fn {k, v} -> [k | v] end)
       |> Enum.group_by(fn {m, _f, _a} -> m end, fn {_m, f, a} -> {f, a} end)
 
@@ -61,7 +61,7 @@ defmodule Treeshake.Shaker do
         to_shake,
         fn path ->
           {shaked, functions_removed} =
-            do_shake(path, reachable_mods_funs, stub_removed_functions)
+            do_shake(path, reachable_mods_funs, module_index, stub_removed_functions)
 
           unless opts.dry_run, do: File.write!(path, shaked)
           {beam_module(path), functions_removed}
@@ -112,9 +112,11 @@ defmodule Treeshake.Shaker do
     }
   end
 
-  defp do_shake(path, reachable_mods_funs, stub_removed_functions) do
-    analysis =
-      path |> Treeshake.Utils.BeamReader.read!() |> Treeshake.Utils.BeamAnalyzer.analyze()
+  defp do_shake(path, reachable_mods_funs, module_index, stub_removed_functions) do
+    analysis = Map.fetch!(module_index, beam_module(path))
+
+    # analysis =
+    #   path |> Treeshake.Utils.BeamReader.read!() |> Treeshake.Utils.BeamAnalyzer.analyze()
 
     reachable_funs = @keep_funs ++ Map.fetch!(reachable_mods_funs, analysis.module)
     reachable_mapset = MapSet.new(reachable_funs)

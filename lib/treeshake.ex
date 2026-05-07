@@ -1,30 +1,29 @@
 defmodule Treeshake do
   @stdlib_apps [:erts, :kernel, :stdlib, :compiler, :elixir, :logger]
 
-  def run(opts \\ []) do
-    opts = parse_opts(opts)
-
-    call_graph = Map.get_lazy(opts, :call_graph, fn -> do_build_call_graph(opts) end)
-
-    IO.puts("rewriting")
-    stats = Treeshake.Shaker.shake(opts.ebin_files, call_graph, opts)
-
-    # FIXME handle case when output_dir is nil
-    if opts[:output_dir] != nil and not opts[:dry_run] do
-      helper_path = :code.which(:treeshake_helper)
-      File.cp!(helper_path, Path.join(opts.output_dir, Path.basename(helper_path)))
-    end
-
-    stats
+  def run(opts) do
+    opts
+    |> config()
+    |> build_module_index()
+    |> build_call_graph()
+    |> shake()
   end
 
-  def build_call_graph(opts \\ []) do
+  def config(opts) do
     opts = parse_opts(opts)
-    do_build_call_graph(opts)
+    %{opts: opts, module_index: nil, call_graph: nil}
   end
 
-  defp do_build_call_graph(opts) do
-    beams = filter_ext(opts.ebin_files, ".beam")
+  def build_module_index(config) do
+    IO.puts("Building module index")
+
+    beams = filter_ext(config.opts.ebin_files, ".beam")
+    %{config | module_index: Treeshake.ModuleIndex.build(beams)}
+  end
+
+  def build_call_graph(%{opts: opts, module_index: module_index} = config)
+      when module_index != nil do
+    IO.puts("Creating call graph")
 
     app_files = filter_ext(opts.ebin_files, ".app")
     entry_points = detect_entry_points(app_files) ++ Map.get(opts, :extra_entry_points, [])
@@ -33,8 +32,22 @@ defmodule Treeshake do
       raise "No entry points found"
     end
 
-    IO.puts("creating call graph")
-    Treeshake.CallGraph.create(beams, entry_points)
+    %{config | call_graph: Treeshake.CallGraph.create(module_index, entry_points)}
+  end
+
+  def shake(%{opts: opts, module_index: module_index, call_graph: call_graph})
+      when module_index != nil and call_graph != nil do
+    IO.puts("Shaking")
+
+    stats = Treeshake.Shaker.shake(opts, call_graph, module_index)
+
+    # FIXME handle case when output_dir is nil
+    if opts[:output_dir] != nil and not opts[:dry_run] do
+      helper_path = :code.which(:treeshake_helper)
+      File.cp!(helper_path, Path.join(opts.output_dir, Path.basename(helper_path)))
+    end
+
+    stats
   end
 
   defp parse_opts(opts) do

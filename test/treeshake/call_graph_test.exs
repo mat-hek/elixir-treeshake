@@ -3,10 +3,10 @@ defmodule Treeshake.CallGraphTest do
 
   setup_all do
     graph =
-      Treeshake.build_call_graph(
-        project: "test/fixtures/demo_app",
-        extra_entry_points: [{Elixir.Supervisor.Default, :init, 1}]
-      )
+      Treeshake.config(project: "test/fixtures/demo_app")
+      |> Treeshake.build_module_index()
+      |> Treeshake.build_call_graph()
+      |> then(& &1.call_graph)
 
     if Application.get_env(:treeshake, :resnapshot) do
       graph_bin = :erlang.term_to_binary(graph, [:deterministic])
