@@ -88,7 +88,8 @@ defmodule Treeshake.Shaker do
     beams_removed =
       if stub_removed_modules do
         for beam <- beams_removed do
-          Treeshake.Utils.BeamRenamer.rename(@module_stub, beam_module(beam), output_dir)
+          stub = Treeshake.Utils.BeamRenamer.rename(@module_stub, beam_module(beam))
+          unless opts.dry_run, do: File.write!(beam, stub)
         end
 
         []

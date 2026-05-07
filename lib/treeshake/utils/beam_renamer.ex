@@ -1,16 +1,15 @@
 defmodule Treeshake.Utils.BeamRenamer do
-  def rename(module, new_module, out_dir) when is_atom(new_module) do
-    {:ok, old_module, chunks} = :beam_lib.all_chunks(module)
+  def rename(module, new_name) when is_atom(new_name) do
+    {:ok, old_name, chunks} = :beam_lib.all_chunks(module)
 
     new_chunks =
       Enum.map(chunks, fn
-        {~c"AtU8", data} -> {~c"AtU8", replace_atom(data, old_module, new_module)}
-        {~c"Atom", data} -> {~c"Atom", replace_atom_legacy(data, old_module, new_module)}
+        {~c"AtU8", data} -> {~c"AtU8", replace_atom(data, old_name, new_name)}
+        {~c"Atom", data} -> {~c"Atom", replace_atom_legacy(data, old_name, new_name)}
         other -> other
       end)
 
-    iodata = build_beam(new_chunks)
-    File.write!(Path.join(out_dir, "#{new_module}.beam"), IO.iodata_to_binary(iodata))
+    build_beam(new_chunks)
   end
 
   defp replace_atom(<<count::32, rest::binary>>, old, new) do
@@ -53,7 +52,7 @@ defmodule Treeshake.Utils.BeamRenamer do
       end)
 
     form_data = IO.iodata_to_binary([~c"BEAM", chunk_data])
-    [~c"FOR1", <<byte_size(form_data)::32>>, form_data]
+    IO.iodata_to_binary([~c"FOR1", <<byte_size(form_data)::32>>, form_data])
   end
 
   defp pad4(bin) do

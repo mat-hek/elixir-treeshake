@@ -13,118 +13,66 @@ defmodule Treeshake.Utils.BeamRenamerTest do
     dir
   end
 
-  defp module_from_beam(path) do
-    {:ok, mod, _chunks} = :beam_lib.all_chunks(String.to_charlist(path))
-    mod
+  defp write_renamed(source, new_mod, out) do
+    binary = BeamRenamer.rename(source, new_mod)
+    path = Path.join(out, "#{new_mod}.beam")
+    File.write!(path, binary)
+    path
   end
 
-  describe "rename/3 - output file" do
-    test "writes a file named after the new module" do
-      out = make_tmp_dir()
-      on_exit(fn -> File.rm_rf!(out) end)
-
-      BeamRenamer.rename(beam("Elixir.DemoApp.Worker"), :"Elixir.DemoApp.Renamed", out)
-
-      assert File.exists?(Path.join(out, "Elixir.DemoApp.Renamed.beam"))
+  describe "rename/2 - output binary" do
+    test "returns binary with new module name" do
+      binary = BeamRenamer.rename(beam("Elixir.DemoApp.Worker"), :"Elixir.DemoApp.Renamed")
+      {:ok, mod, _chunks} = :beam_lib.all_chunks(binary)
+      assert mod == :"Elixir.DemoApp.Renamed"
     end
 
-    test "does not write a file with the old module name" do
-      out = make_tmp_dir()
-      on_exit(fn -> File.rm_rf!(out) end)
-
-      BeamRenamer.rename(beam("Elixir.DemoApp.Worker"), :"Elixir.DemoApp.Renamed", out)
-
-      refute File.exists?(Path.join(out, "Elixir.DemoApp.Worker.beam"))
+    test "returned binary does not report old module name" do
+      binary = BeamRenamer.rename(beam("Elixir.DemoApp.Worker"), :"Elixir.DemoApp.Renamed")
+      {:ok, mod, _chunks} = :beam_lib.all_chunks(binary)
+      refute mod == :"Elixir.DemoApp.Worker"
     end
   end
 
-  describe "rename/3 - module name in output BEAM" do
-    test "resulting BEAM reports the new module name" do
-      out = make_tmp_dir()
-      on_exit(fn -> File.rm_rf!(out) end)
-
-      BeamRenamer.rename(beam("Elixir.DemoApp.Worker"), :"Elixir.DemoApp.Renamed", out)
-
-      new_beam = Path.join(out, "Elixir.DemoApp.Renamed.beam")
-      assert module_from_beam(new_beam) == :"Elixir.DemoApp.Renamed"
-    end
-
-    test "resulting BEAM does not report the old module name" do
-      out = make_tmp_dir()
-      on_exit(fn -> File.rm_rf!(out) end)
-
-      BeamRenamer.rename(beam("Elixir.DemoApp.Worker"), :"Elixir.DemoApp.Renamed", out)
-
-      new_beam = Path.join(out, "Elixir.DemoApp.Renamed.beam")
-      refute module_from_beam(new_beam) == :"Elixir.DemoApp.Worker"
-    end
-  end
-
-  describe "rename/3 - BEAM validity" do
+  describe "rename/2 - BEAM validity" do
     test "output is a valid BEAM (all_chunks succeeds)" do
-      out = make_tmp_dir()
-      on_exit(fn -> File.rm_rf!(out) end)
+      binary = BeamRenamer.rename(beam("Elixir.DemoApp.Worker"), :"Elixir.DemoApp.ValidCheck")
 
-      BeamRenamer.rename(beam("Elixir.DemoApp.Worker"), :"Elixir.DemoApp.ValidCheck", out)
-
-      new_beam = Path.join(out, "Elixir.DemoApp.ValidCheck.beam")
-
-      assert {:ok, :"Elixir.DemoApp.ValidCheck", _chunks} =
-               :beam_lib.all_chunks(String.to_charlist(new_beam))
+      assert {:ok, :"Elixir.DemoApp.ValidCheck", _chunks} = :beam_lib.all_chunks(binary)
     end
 
     test "output is loadable by the runtime" do
-      out = make_tmp_dir()
-
-      on_exit(fn ->
-        :code.purge(:"Elixir.DemoApp.Loadable")
-        :code.delete(:"Elixir.DemoApp.Loadable")
-        File.rm_rf!(out)
-      end)
-
-      BeamRenamer.rename(beam("Elixir.DemoApp.Worker"), :"Elixir.DemoApp.Loadable", out)
-
-      new_beam = Path.join(out, "Elixir.DemoApp.Loadable.beam")
-      {:ok, binary} = File.read(new_beam)
-
-      assert {:module, :"Elixir.DemoApp.Loadable"} =
-               :code.load_binary(
-                 :"Elixir.DemoApp.Loadable",
-                 String.to_charlist(new_beam),
-                 binary
-               )
-    end
-
-    test "module_info/0 reports the new module name after loading" do
-      mod = :"Elixir.DemoApp.ModuleInfoCheck"
-      out = make_tmp_dir()
+      mod = :"Elixir.DemoApp.Loadable"
 
       on_exit(fn ->
         :code.purge(mod)
         :code.delete(mod)
-        File.rm_rf!(out)
       end)
 
-      BeamRenamer.rename(beam("Elixir.DemoApp.Worker"), mod, out)
+      binary = BeamRenamer.rename(beam("Elixir.DemoApp.Worker"), mod)
 
-      new_beam = Path.join(out, "#{mod}.beam")
-      {:ok, binary} = File.read(new_beam)
-      :code.load_binary(mod, String.to_charlist(new_beam), binary)
+      assert {:module, ^mod} = :code.load_binary(mod, ~c"Elixir.DemoApp.Loadable.beam", binary)
+    end
+
+    test "module_info/0 reports the new module name after loading" do
+      mod = :"Elixir.DemoApp.ModuleInfoCheck"
+
+      on_exit(fn ->
+        :code.purge(mod)
+        :code.delete(mod)
+      end)
+
+      binary = BeamRenamer.rename(beam("Elixir.DemoApp.Worker"), mod)
+      :code.load_binary(mod, ~c"Elixir.DemoApp.ModuleInfoCheck.beam", binary)
 
       assert mod.module_info(:module) == mod
     end
 
     test "chunks are preserved from original" do
-      out = make_tmp_dir()
-      on_exit(fn -> File.rm_rf!(out) end)
+      {:ok, _old_mod, old_chunks} = :beam_lib.all_chunks(beam("Elixir.DemoApp.Worker"))
 
-      {:ok, _old_mod, old_chunks} =
-        :beam_lib.all_chunks(beam("Elixir.DemoApp.Worker"))
-
-      BeamRenamer.rename(beam("Elixir.DemoApp.Worker"), :"Elixir.DemoApp.ChunkCheck", out)
-
-      new_beam = Path.join(out, "Elixir.DemoApp.ChunkCheck.beam")
-      {:ok, _, new_chunks} = :beam_lib.all_chunks(String.to_charlist(new_beam))
+      binary = BeamRenamer.rename(beam("Elixir.DemoApp.Worker"), :"Elixir.DemoApp.ChunkCheck")
+      {:ok, _, new_chunks} = :beam_lib.all_chunks(binary)
 
       old_names = Enum.map(old_chunks, &elem(&1, 0)) |> Enum.sort()
       new_names = Enum.map(new_chunks, &elem(&1, 0)) |> Enum.sort()
@@ -133,7 +81,7 @@ defmodule Treeshake.Utils.BeamRenamerTest do
     end
   end
 
-  describe "rename/3 - empty module from Code.compile_quoted" do
+  describe "rename/2 - empty module from Code.compile_quoted" do
     test "renames the module and module_info/1 returns the new name" do
       src_mod = :"Elixir.BeamRenamerTest.EmptySource"
       new_mod = :"Elixir.BeamRenamerTest.EmptyRenamed"
@@ -145,52 +93,56 @@ defmodule Treeshake.Utils.BeamRenamerTest do
         end
         |> Code.compile_quoted()
 
-      out = make_tmp_dir()
-
       on_exit(fn ->
         :code.purge(src_mod)
         :code.delete(src_mod)
         :code.purge(new_mod)
         :code.delete(new_mod)
-        File.rm_rf!(out)
       end)
 
-      BeamRenamer.rename(beam_binary, new_mod, out)
+      binary = BeamRenamer.rename(beam_binary, new_mod)
 
-      new_beam = Path.join(out, "#{new_mod}.beam")
-      assert File.exists?(new_beam)
-      assert module_from_beam(new_beam) == new_mod
-
-      {:ok, binary} = File.read(new_beam)
-      :code.load_binary(new_mod, String.to_charlist(new_beam), binary)
+      {:ok, ^new_mod, _} = :beam_lib.all_chunks(binary)
+      :code.load_binary(new_mod, ~c"Elixir.BeamRenamerTest.EmptyRenamed.beam", binary)
       assert new_mod.module_info(:module) == new_mod
     end
   end
 
-  describe "rename/3 - different source modules" do
+  describe "rename/2 - different source modules" do
     test "renames DemoApp.Application" do
-      out = make_tmp_dir()
-      on_exit(fn -> File.rm_rf!(out) end)
+      binary =
+        BeamRenamer.rename(beam("Elixir.DemoApp.Application"), :"Elixir.DemoApp.RenamedApp")
 
-      BeamRenamer.rename(
-        beam("Elixir.DemoApp.Application"),
-        :"Elixir.DemoApp.RenamedApp",
-        out
-      )
-
-      assert module_from_beam(Path.join(out, "Elixir.DemoApp.RenamedApp.beam")) ==
-               :"Elixir.DemoApp.RenamedApp"
+      {:ok, mod, _} = :beam_lib.all_chunks(binary)
+      assert mod == :"Elixir.DemoApp.RenamedApp"
     end
   end
 
-  describe "rename/3 - error cases" do
+  describe "rename/2 - error cases" do
     test "raises when input file does not exist" do
+      assert_raise MatchError, fn ->
+        BeamRenamer.rename(~c"/tmp/no_such_file_for_renamer.beam", :"Elixir.Foo")
+      end
+    end
+  end
+
+  describe "write_renamed helper - file output" do
+    test "writes a file named after the new module" do
       out = make_tmp_dir()
       on_exit(fn -> File.rm_rf!(out) end)
 
-      assert_raise MatchError, fn ->
-        BeamRenamer.rename(~c"/tmp/no_such_file_for_renamer.beam", :"Elixir.Foo", out)
-      end
+      write_renamed(beam("Elixir.DemoApp.Worker"), :"Elixir.DemoApp.Renamed", out)
+
+      assert File.exists?(Path.join(out, "Elixir.DemoApp.Renamed.beam"))
+    end
+
+    test "does not write a file with the old module name" do
+      out = make_tmp_dir()
+      on_exit(fn -> File.rm_rf!(out) end)
+
+      write_renamed(beam("Elixir.DemoApp.Worker"), :"Elixir.DemoApp.Renamed", out)
+
+      refute File.exists?(Path.join(out, "Elixir.DemoApp.Worker.beam"))
     end
   end
 end
