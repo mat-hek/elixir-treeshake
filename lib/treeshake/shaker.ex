@@ -1,6 +1,4 @@
 defmodule Treeshake.Shaker do
-  @non_treeshakable_apps [:erts, :stdlib, :kernel, :logger]
-
   @keep_funs [
     module_info: 0,
     module_info: 1,
@@ -20,17 +18,15 @@ defmodule Treeshake.Shaker do
   @module_stub module_stub
 
   def shake(opts, call_graph, module_index) do
-    non_treeshakable_modules = Map.get(opts, :non_treeshakable_modules, [])
+    non_treeshakable_modules = Map.get(opts, :non_treeshakable_modules, []) |> MapSet.new()
     stub_removed_functions = Map.get(opts, :stub_removed_functions, false)
     stub_removed_modules = Map.get(opts, :stub_removed_modules, false)
 
-    non_treeshakable_modules =
-      MapSet.new(non_treeshakable_modules ++ non_treeshakable_stdlib_modules())
-
     output_dir = Map.get(opts, :output_dir)
 
+    # Fixme: add the path to the result in beam reader and take the files from the module index instead
     ebin_files =
-      if opts.dry_run or output_dir == nil do
+      if opts.dry_run do
         opts.ebin_files
       else
         File.mkdir_p!(output_dir)
@@ -38,6 +34,7 @@ defmodule Treeshake.Shaker do
         Enum.map(opts.ebin_files, fn src ->
           output_path = Path.join(output_dir, Path.basename(src))
           File.copy!(src, output_path)
+          if File.exists?(src <> ".core"), do: File.copy!(src <> ".core", output_path <> ".core")
           output_path
         end)
       end
@@ -50,6 +47,7 @@ defmodule Treeshake.Shaker do
     reachable_mods_funs =
       call_graph
       |> Enum.flat_map(fn {k, v} -> [k | v] end)
+      |> Enum.filter(fn {m, f, a} -> get_in(module_index[m].public_functions[{f, a}]) end)
       |> Enum.group_by(fn {m, _f, _a} -> m end, fn {_m, f, a} -> {f, a} end)
 
     reachable_mods = MapSet.new(reachable_mods_funs, fn {m, _fa} -> m end)
@@ -115,9 +113,6 @@ defmodule Treeshake.Shaker do
   defp do_shake(path, reachable_mods_funs, module_index, stub_removed_functions) do
     analysis = Map.fetch!(module_index, beam_module(path))
 
-    # analysis =
-    #   path |> Treeshake.Utils.BeamReader.read!() |> Treeshake.Utils.BeamAnalyzer.analyze()
-
     reachable_funs = @keep_funs ++ Map.fetch!(reachable_mods_funs, analysis.module)
     reachable_mapset = MapSet.new(reachable_funs)
 
@@ -129,14 +124,6 @@ defmodule Treeshake.Shaker do
     Treeshake.Utils.BeamRewriter.keep_funs(path, reachable_funs ++ reachable_privs,
       stub_removed_public: stub_removed_functions
     )
-  end
-
-  defp non_treeshakable_stdlib_modules() do
-    @non_treeshakable_apps
-    |> Enum.flat_map(fn app ->
-      Path.wildcard(Path.join(:code.lib_dir(app, :ebin), "*.beam"))
-    end)
-    |> Enum.map(&beam_module/1)
   end
 
   defp beam_module(beam_path) do

@@ -5,7 +5,7 @@ defmodule Treeshake.Utils.BeamReader do
 
   defmodule FunctionInfo do
     @moduledoc false
-    defstruct [:name, :arity, :public, :calls, :potential_modules, matching_terms: []]
+    defstruct [:name, :arity, :public, :calls, :potential_modules]
   end
 
   @type name_arity :: {atom(), non_neg_integer()}
@@ -48,16 +48,16 @@ defmodule Treeshake.Utils.BeamReader do
 
   Returns `{:ok, module_info()}` or `:error`.
   """
-  @spec read(Path.t(), (term() -> {:match, term()} | term())) :: {:ok, module_info()} | :error
-  def read(beam_path, filter \\ nil) do
+  @spec read(Path.t()) :: {:ok, module_info()} | :error
+  def read(beam_path) do
     if File.exists?(beam_path <> ".core") do
       core = (beam_path <> ".core") |> File.read!() |> :erlang.binary_to_term()
       module = beam_path |> Path.basename(".beam") |> String.to_atom()
-      do_read(module, core, filter)
+      do_read(module, core)
     else
       case get_forms(beam_path) do
         {:ok, module, core} ->
-          do_read(module, core, filter)
+          do_read(module, core)
 
         :error ->
           :error
@@ -65,14 +65,14 @@ defmodule Treeshake.Utils.BeamReader do
     end
   end
 
-  def read!(beam_path, filter \\ nil) do
-    case read(beam_path, filter) do
+  def read!(beam_path) do
+    case read(beam_path) do
       {:ok, info} -> info
       :error -> raise "Couldn't read abstract code of #{beam_path}"
     end
   end
 
-  defp do_read(module, core, filter) do
+  defp do_read(module, core) do
     exports = collect_exports(core)
     callbacks = collect_callbacks(core)
     protocol_impl = collect_protocol_impl(core)
@@ -87,7 +87,7 @@ defmodule Treeshake.Utils.BeamReader do
       end
 
     is_protocol = protocol_definition?(core)
-    functions = collect_functions(core, exports, filter)
+    functions = collect_functions(core, exports)
 
     abstraction =
       cond do
@@ -184,7 +184,7 @@ defmodule Treeshake.Utils.BeamReader do
 
   defp find_impl_value(_, _), do: nil
 
-  defp collect_functions({:c_module, _, _, _, _, defs}, exports, filter) do
+  defp collect_functions({:c_module, _, _, _, _, defs}, exports) do
     defs
     |> Enum.reject(fn {{:c_var, _, {name, arity}}, _} ->
       name == :module_info and arity in [0, 1]
@@ -210,8 +210,7 @@ defmodule Treeshake.Utils.BeamReader do
         arity: arity,
         public: MapSet.member?(exports, {name, arity}),
         calls: calls,
-        potential_modules: potential_modules,
-        matching_terms: collect_matching_terms(fun_body, filter) |> Enum.uniq()
+        potential_modules: potential_modules
       }
     end)
   end
@@ -423,56 +422,4 @@ defmodule Treeshake.Utils.BeamReader do
   end
 
   defp count_list(_), do: :error
-
-  # ---- term collection ----
-
-  # Each AST node is reconstructed into its "shape" (tuples and lists are
-  # structurally built; non-literal leaves stay as raw AST nodes), then passed
-  # to the filter.  Traversal always continues into children so every sub-term
-  # is checked independently.
-
-  defp collect_matching_terms(_forms, nil) do
-    []
-  end
-
-  defp collect_matching_terms([head | tail], filter),
-    do: collect_matching_terms(head, filter) ++ collect_matching_terms(tail, filter)
-
-  defp collect_matching_terms([], _filter), do: []
-
-  defp collect_matching_terms(form, filter) when is_tuple(form) do
-    own =
-      case filter.(reconstruct_shape(form)) do
-        {:match, value} -> [value]
-        _ -> []
-      end
-
-    own ++ (form |> Tuple.to_list() |> collect_matching_terms(filter))
-  end
-
-  defp collect_matching_terms(_, _), do: []
-
-  # ---- shape reconstruction ----
-
-  # Literals resolve to their plain Elixir value.
-  defp reconstruct_shape({:c_literal, _, v}), do: v
-
-  # Lists: each element is reconstructed; non-literal elements stay as raw AST.
-  defp reconstruct_shape({:c_cons, _, head, tail}),
-    do: [reconstruct_shape(head) | reconstruct_shape_tail(tail)]
-
-  # Tuples: each child is reconstructed; non-literal children stay as raw AST.
-  defp reconstruct_shape({:c_tuple, _, children}),
-    do: children |> Enum.map(&reconstruct_shape/1) |> List.to_tuple()
-
-  # Everything else (variables, calls, …) is kept as-is.
-  defp reconstruct_shape(other), do: other
-
-  defp reconstruct_shape_tail({:c_literal, _, []}), do: []
-
-  defp reconstruct_shape_tail({:c_cons, _, head, tail}),
-    do: [reconstruct_shape(head) | reconstruct_shape_tail(tail)]
-
-  # Improper list tail — wrap in a list so the result is always a proper list.
-  defp reconstruct_shape_tail(other), do: [reconstruct_shape(other)]
 end

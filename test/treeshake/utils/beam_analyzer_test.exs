@@ -17,25 +17,23 @@ defmodule Treeshake.Utils.BeamAnalyzerTest do
     }
   end
 
-  defp pub(name, arity, calls \\ [], potential_modules \\ [], matching_terms \\ []) do
+  defp pub(name, arity, calls \\ [], potential_modules \\ []) do
     %FunctionInfo{
       name: name,
       arity: arity,
       public: true,
       calls: calls,
-      potential_modules: potential_modules,
-      matching_terms: matching_terms
+      potential_modules: potential_modules
     }
   end
 
-  defp priv(name, arity, calls \\ [], potential_modules \\ [], matching_terms \\ []) do
+  defp priv(name, arity, calls \\ [], potential_modules \\ []) do
     %FunctionInfo{
       name: name,
       arity: arity,
       public: false,
       calls: calls,
-      potential_modules: potential_modules,
-      matching_terms: matching_terms
+      potential_modules: potential_modules
     }
   end
 
@@ -80,7 +78,6 @@ defmodule Treeshake.Utils.BeamAnalyzerTest do
       info = find_pub(result, :foo)
       assert info.calls == []
       assert info.potential_modules == []
-      assert info.matching_terms == []
     end
 
     test "remote calls are preserved unchanged" do
@@ -115,16 +112,6 @@ defmodule Treeshake.Utils.BeamAnalyzerTest do
 
       info = BeamAnalyzer.analyze(build_info(fns)) |> find_pub(:foo)
       assert SomeModule in info.potential_modules
-    end
-
-    test "matching_terms of a directly-called private function are merged in" do
-      fns = [
-        pub(:foo, 0, [{nil, :helper, 0}]),
-        priv(:helper, 0, [], [], [:some_term])
-      ]
-
-      info = BeamAnalyzer.analyze(build_info(fns)) |> find_pub(:foo)
-      assert :some_term in info.matching_terms
     end
 
     test "transitive private chain: pub -> priv B -> priv C" do
@@ -188,17 +175,6 @@ defmodule Treeshake.Utils.BeamAnalyzerTest do
 
       info = BeamAnalyzer.analyze(build_info(fns)) |> find_pub(:foo)
       assert Enum.count(info.potential_modules, &(&1 == SomeModule)) == 1
-    end
-
-    test "expanded matching_terms are deduplicated" do
-      fns = [
-        pub(:foo, 0, [{nil, :h1, 0}, {nil, :h2, 0}]),
-        priv(:h1, 0, [], [], [:term]),
-        priv(:h2, 0, [], [], [:term])
-      ]
-
-      info = BeamAnalyzer.analyze(build_info(fns)) |> find_pub(:foo)
-      assert Enum.count(info.matching_terms, &(&1 == :term)) == 1
     end
 
     test "local call to a public function is not expanded (kept as-is)" do

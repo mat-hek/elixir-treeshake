@@ -271,6 +271,15 @@ defmodule Treeshake.Utils.Graph do
     end)
   end
 
+  def diff(g1, g2) do
+    g1
+    |> Enum.flat_map(fn {k, v} ->
+      v = v -- Map.get(g2, k, [])
+      if v == [], do: [], else: [{k, v}]
+    end)
+    |> Map.new()
+  end
+
   defp node_label({m, f, a}) do
     mod =
       m

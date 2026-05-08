@@ -11,7 +11,7 @@ defmodule Treeshake.Utils.BeamAnalyzer do
 
   defmodule PublicFunctionInfo do
     @moduledoc false
-    defstruct [:calls, :potential_modules, :matching_terms]
+    defstruct [:calls, :potential_modules]
   end
 
   @type name_arity :: {atom(), non_neg_integer()}
@@ -62,8 +62,7 @@ defmodule Treeshake.Utils.BeamAnalyzer do
               m == module and Map.has_key?(priv_index, {name, arity})
             end)
             |> Enum.uniq(),
-          potential_modules: all_fns |> Enum.flat_map(& &1.potential_modules) |> Enum.uniq(),
-          matching_terms: all_fns |> Enum.flat_map(& &1.matching_terms) |> Enum.uniq()
+          potential_modules: all_fns |> Enum.flat_map(& &1.potential_modules) |> Enum.uniq()
         }
 
         {{pub_fn.name, pub_fn.arity}, pub_info, reachable}
@@ -85,11 +84,9 @@ defmodule Treeshake.Utils.BeamAnalyzer do
     %{
       module: module,
       public_functions: expanded_pub,
-      private_functions: expanded_priv,
-      abstraction: module_info.abstraction,
-      behaviour_impls: module_info.behaviour_impls,
-      protocol_impl: module_info.protocol_impl
+      private_functions: expanded_priv
     }
+    |> Map.merge(Map.take(module_info, [:abstraction, :behaviour_impls, :protocol_impl]))
   end
 
   defp resolve_local({nil, name, arity}, module), do: {module, name, arity}

@@ -165,6 +165,9 @@ defmodule Treeshake.CallGraphTest do
       File.read!("test/fixtures/call_graph.bin")
       |> :erlang.binary_to_term()
 
-    assert fixture == graph
+    assert [fixture_diff: %{}, graph_diff: %{}] == [
+             fixture_diff: Treeshake.Utils.Graph.diff(fixture, graph),
+             graph_diff: Treeshake.Utils.Graph.diff(graph, fixture)
+           ]
   end
 end

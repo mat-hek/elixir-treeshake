@@ -102,20 +102,15 @@ defmodule Treeshake.CallGraph do
           referenced_modules: acc_referenced_modules
         } = acc
 
-        {calls, potential_modules} =
-          with %{^m => %{public_functions: pub}} <- module_index,
-               %{calls: c, potential_modules: pm} <- Map.get(pub, {f, a}) do
-            {c, pm}
-          else
-            _ -> {[], []}
-          end
+        function_info = get_in(module_index[m].public_functions[{f, a}])
+        function_info = function_info || %{calls: [], potential_modules: []}
 
         referenced_modules_info =
           if {f, a} in [impl_for: 1, impl_for!: 1] do
             []
           else
             Enum.flat_map(
-              potential_modules,
+              function_info.potential_modules,
               &case module_index[&1] do
                 nil -> []
                 info -> [info]
@@ -158,7 +153,7 @@ defmodule Treeshake.CallGraph do
         hardcoded_calls = Map.get(@hardcoded_edges, m, [])
 
         all_calls =
-          (calls ++ behaviour_calls ++ child_spec_calls ++ hardcoded_calls)
+          (function_info.calls ++ behaviour_calls ++ child_spec_calls ++ hardcoded_calls)
           |> Enum.reject(&(&1 == mfa))
 
         protocol_edges_from_calls =

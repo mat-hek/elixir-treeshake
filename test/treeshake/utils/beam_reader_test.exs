@@ -201,77 +201,6 @@ defmodule Treeshake.Utils.BeamReaderTest do
     end
   end
 
-  describe "read/2 - matching_terms" do
-    test "default filter yields no matching terms" do
-      {:ok, info} = BeamReader.read(beam(DemoApp.Worker))
-
-      assert Enum.all?(info.functions, &(&1.matching_terms == []))
-    end
-
-    test "filter returning {:match, value} collects value — atom literal" do
-      # Filter receives the reconstructed shape: the atom :ok, not {:atom, _, :ok}
-      filter = fn
-        :ok -> {:match, :ok}
-        _ -> :ignore
-      end
-
-      {:ok, info} = BeamReader.read(beam(DemoApp.BehaviourImpl), filter)
-      hello = find_fun(info.functions, :hello, 0)
-
-      assert :ok in hello.matching_terms
-    end
-
-    test "filter can extract a transformed value" do
-      # Collect all atom values (filter receives plain atoms, not AST nodes)
-      filter = fn
-        v when is_atom(v) -> {:match, v}
-        _ -> :ignore
-      end
-
-      {:ok, info} = BeamReader.read(beam(DemoApp.BehaviourImpl), filter)
-      hello = find_fun(info.functions, :hello, 0)
-
-      assert DemoApp.BehaviourImplDep in hello.matching_terms
-      assert :ok in hello.matching_terms
-    end
-
-    test "filter returning {:match, value} collects value — integer literal" do
-      # unused/1 body: foo + 1; filter receives the plain integer 1
-      filter = fn
-        n when is_integer(n) -> {:match, n}
-        _ -> :ignore
-      end
-
-      {:ok, info} = BeamReader.read(beam(DemoApp.Worker), filter)
-      unused = find_fun(info.functions, :unused, 1)
-
-      assert 1 in unused.matching_terms
-    end
-
-    test "non-{:match, _} return values are ignored" do
-      filter = fn _ -> false end
-
-      {:ok, info} = BeamReader.read(beam(DemoApp.BehaviourImpl), filter)
-      hello = find_fun(info.functions, :hello, 0)
-
-      assert hello.matching_terms == []
-    end
-
-    test "matching_terms has no duplicates" do
-      filter = fn
-        v when is_atom(v) -> {:match, v}
-        _ -> :ignore
-      end
-
-      {:ok, info} = BeamReader.read(beam(DemoApp.Worker), filter)
-
-      for func <- info.functions do
-        assert func.matching_terms == Enum.uniq(func.matching_terms),
-               "duplicate matching_terms in #{func.name}/#{func.arity}"
-      end
-    end
-  end
-
   describe "read/2 - potential_modules excludes pattern match and guard atoms" do
     test "function-head pattern atom is absent from potential_modules" do
       {:ok, info} = BeamReader.read(beam(DemoApp.PatternMatcher))
@@ -328,13 +257,7 @@ defmodule Treeshake.Utils.BeamReaderTest do
 
   test "task" do
     assert {:ok, info} =
-             Treeshake.Utils.BeamReader.read("test/fixtures/ebin/Elixir.Task.beam", fn
-               {m, f, a} when is_atom(m) and is_atom(f) and (is_integer(a) or is_list(a)) ->
-                 {:match, {m, f, a}}
-
-               _ ->
-                 false
-             end)
+             Treeshake.Utils.BeamReader.read("test/fixtures/ebin/Elixir.Task.beam")
 
     assert child_spec = Enum.find(info.functions, &(&1.name == :child_spec))
 

@@ -1,5 +1,28 @@
 defmodule Treeshake do
   @stdlib_apps [:erts, :kernel, :stdlib, :compiler, :elixir, :logger]
+  @non_treeshakable_apps [:erts, :stdlib, :kernel, :logger]
+  @force_remove_modules [
+    Code.Formatter,
+    :prim_inet,
+    :erl_lint,
+    # :erl_parse,
+    :qlc,
+    :qlc_pt,
+    :dets_v9,
+    :dets,
+    :sofs,
+    :erl_tar,
+    # :epp,
+    # :erl_scan,
+    :file_sorter,
+    # :global,
+    :disk_log,
+    # :net_kernel,
+    :zip,
+    # :inet_db,
+    :edlin_expand,
+    :dets_utils
+  ]
 
   def run(opts) do
     opts
@@ -17,7 +40,11 @@ defmodule Treeshake do
   def build_module_index(config) do
     IO.puts("Building module index")
 
-    beams = filter_ext(config.opts.ebin_files, ".beam")
+    beams =
+      config.opts.ebin_files
+      |> filter_ext(".beam")
+      |> Enum.reject(&(beam_module(&1) in @force_remove_modules))
+
     %{config | module_index: Treeshake.ModuleIndex.build(beams)}
   end
 
@@ -39,10 +66,13 @@ defmodule Treeshake do
       when module_index != nil and call_graph != nil do
     IO.puts("Shaking")
 
+    unless Map.has_key?(opts, :output_dir) or opts.dry_run do
+      raise "Missing required option: output_dir"
+    end
+
     stats = Treeshake.Shaker.shake(opts, call_graph, module_index)
 
-    # FIXME handle case when output_dir is nil
-    if opts[:output_dir] != nil and not opts[:dry_run] do
+    unless opts.dry_run do
       helper_path = :code.which(:treeshake_helper)
       File.cp!(helper_path, Path.join(opts.output_dir, Path.basename(helper_path)))
     end
@@ -51,14 +81,16 @@ defmodule Treeshake do
   end
 
   defp parse_opts(opts) do
-    default_tmp_dir =
-      "/Users/matheksm/treeshake/dialyzer_tmp"
-      |> Path.join(Keyword.get(opts, :tmp_subdir, random_str()))
-
     opts = Keyword.put_new(opts, :dry_run, false)
-    opts = Keyword.put_new(opts, :tmp_dir, default_tmp_dir)
-    tmp_dir = Keyword.fetch!(opts, :tmp_dir)
-    File.mkdir_p!(tmp_dir)
+    default_non_treeshakable = non_treeshakable_stdlib_modules()
+
+    opts =
+      Keyword.update(
+        opts,
+        :non_treeshakable_modules,
+        default_non_treeshakable,
+        &(&1 ++ default_non_treeshakable)
+      )
 
     {project, opts} = Keyword.pop(opts, :project)
 
@@ -82,7 +114,7 @@ defmodule Treeshake do
     ebin_files =
       Keyword.get(opts, :ebin_files, []) ++
         project_ebin_files ++
-        if Keyword.get(opts, :copy_stdlibs, true), do: copy_stdlibs(tmp_dir), else: []
+        if Keyword.get(opts, :copy_stdlibs, true), do: get_stdlibs(), else: []
 
     ebin_files = Enum.uniq_by(ebin_files, &Path.basename/1)
     opts = Keyword.put(opts, :ebin_files, ebin_files)
@@ -104,30 +136,30 @@ defmodule Treeshake do
 
   defp find_ebin_files(build_dir) do
     consolidated = build_dir |> Path.join("**/consolidated/*") |> Path.wildcard()
-    # consolidated = []
     ebin = build_dir |> Path.join("**/ebin/*") |> Path.wildcard()
     Enum.uniq_by(consolidated ++ ebin, &Path.basename/1)
   end
 
-  defp copy_stdlibs(tmp_dir) do
-    stdlibs_dir = Path.join(tmp_dir, "stdlibs")
-    File.mkdir_p!(stdlibs_dir)
-
+  defp get_stdlibs() do
     Enum.flat_map(@stdlib_apps, fn app ->
-      dest = Path.join(stdlibs_dir, "#{app}")
-      File.rm_rf!(dest)
-      File.cp_r!(:code.lib_dir(app, :ebin), dest)
-      Path.wildcard(Path.join(dest, "*"))
+      app |> :code.lib_dir() |> Path.join("ebin/*") |> Path.wildcard()
     end)
+  end
+
+  defp non_treeshakable_stdlib_modules() do
+    @non_treeshakable_apps
+    |> Enum.flat_map(fn app ->
+      app |> :code.lib_dir() |> Path.join("ebin/*.beam") |> Path.wildcard()
+    end)
+    |> Enum.map(&beam_module/1)
+    |> Enum.reject(&(&1 in @force_remove_modules))
+  end
+
+  defp beam_module(beam_path) do
+    beam_path |> Path.basename(".beam") |> String.to_atom()
   end
 
   defp filter_ext(paths, ext) do
     Enum.filter(paths, fn path -> Path.extname(path) == ext end)
-  end
-
-  defp random_str() do
-    datetime = DateTime.utc_now() |> DateTime.to_iso8601()
-    random = Enum.random(0..100_000) |> to_string() |> String.pad_leading(6, "0")
-    datetime <> "-" <> random
   end
 end
