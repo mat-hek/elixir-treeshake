@@ -298,4 +298,8 @@ defmodule Treeshake.Utils.Graph do
       if node in vs, do: [k], else: []
     end)
   end
+
+  def nodes(graph) do
+    graph |> Enum.flat_map(fn {k, v} -> [k | v] end) |> Enum.sort() |> Enum.dedup()
+  end
 end

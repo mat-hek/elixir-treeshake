@@ -1,27 +1,16 @@
 defmodule Treeshake do
   @stdlib_apps [:erts, :kernel, :stdlib, :compiler, :elixir, :logger]
   @non_treeshakable_apps [:erts, :stdlib, :kernel, :logger]
-  @force_remove_modules [
-    Code.Formatter,
-    :prim_inet,
+
+  @default_ignore_modules [:prim_eval]
+
+  @hardcoded_calls %{
+    Elixir.Supervisor => [{Elixir.Supervisor.Default, :init, 1}]
+  }
+
+  @force_drop [
     :erl_lint,
-    # :erl_parse,
-    :qlc,
-    :qlc_pt,
-    :dets_v9,
-    :dets,
-    :sofs,
-    :erl_tar,
-    # :epp,
-    # :erl_scan,
-    :file_sorter,
-    # :global,
-    :disk_log,
-    # :net_kernel,
-    :zip,
-    # :inet_db,
-    :edlin_expand,
-    :dets_utils
+    :elixir_parser
   ]
 
   def run(opts) do
@@ -37,34 +26,36 @@ defmodule Treeshake do
     %{opts: opts, module_index: nil, call_graph: nil}
   end
 
-  def build_module_index(config) do
-    IO.puts("Building module index")
+  def build_module_index(%{opts: opts} = config) do
+    if opts.verbose, do: IO.puts("Building module index")
+
+    to_skip = opts.drop ++ opts.ignore
 
     beams =
-      config.opts.ebin_files
+      opts.ebin_files
       |> filter_ext(".beam")
-      |> Enum.reject(&(beam_module(&1) in @force_remove_modules))
+      |> Enum.reject(&(beam_module(&1) in to_skip))
 
-    %{config | module_index: Treeshake.ModuleIndex.build(beams)}
+    %{config | module_index: Treeshake.ModuleIndex.build(beams, @hardcoded_calls)}
   end
 
   def build_call_graph(%{opts: opts, module_index: module_index} = config)
       when module_index != nil do
-    IO.puts("Creating call graph")
+    if opts.verbose, do: IO.puts("Creating call graph")
 
     app_files = filter_ext(opts.ebin_files, ".app")
-    entry_points = detect_entry_points(app_files) ++ Map.get(opts, :extra_entry_points, [])
+    keep = detect_entry_points(app_files) ++ Map.get(opts, :keep, [])
 
-    if entry_points == [] do
+    if keep == [] do
       raise "No entry points found"
     end
 
-    %{config | call_graph: Treeshake.CallGraph.create(module_index, entry_points)}
+    %{config | call_graph: Treeshake.CallGraph.create(module_index, keep)}
   end
 
   def shake(%{opts: opts, module_index: module_index, call_graph: call_graph})
       when module_index != nil and call_graph != nil do
-    IO.puts("Shaking")
+    if opts.verbose, do: IO.puts("Shaking")
 
     unless Map.has_key?(opts, :output_dir) or opts.dry_run do
       raise "Missing required option: output_dir"
@@ -81,16 +72,15 @@ defmodule Treeshake do
   end
 
   defp parse_opts(opts) do
-    opts = Keyword.put_new(opts, :dry_run, false)
-    default_non_treeshakable = non_treeshakable_stdlib_modules()
-
     opts =
-      Keyword.update(
-        opts,
-        :non_treeshakable_modules,
-        default_non_treeshakable,
-        &(&1 ++ default_non_treeshakable)
-      )
+      opts
+      |> Keyword.put_new(:verbose, false)
+      |> Keyword.put_new(:dry_run, false)
+      |> keyword_concat_default(:drop, @force_drop)
+      |> keyword_concat_default(:ignore, @default_ignore_modules)
+
+    default_leave = non_treeshakable_stdlib_modules()
+    opts = keyword_concat_default(opts, :leave, default_leave -- opts[:drop])
 
     {project, opts} = Keyword.pop(opts, :project)
 
@@ -147,12 +137,35 @@ defmodule Treeshake do
   end
 
   defp non_treeshakable_stdlib_modules() do
+    exclusions =
+      [
+        :erl_parse,
+        :epp,
+        :erl_scan,
+        Code.Formatter,
+        :prim_inet,
+        :qlc,
+        :qlc_pt,
+        :dets_v9,
+        :dets,
+        :sofs,
+        :erl_tar,
+        :file_sorter,
+        :global,
+        :disk_log,
+        :net_kernel,
+        :zip,
+        # :inet_db,
+        :edlin_expand,
+        :dets_utils
+      ] ++ @force_drop
+
     @non_treeshakable_apps
     |> Enum.flat_map(fn app ->
       app |> :code.lib_dir() |> Path.join("ebin/*.beam") |> Path.wildcard()
     end)
     |> Enum.map(&beam_module/1)
-    |> Enum.reject(&(&1 in @force_remove_modules))
+    |> then(&(&1 -- exclusions))
   end
 
   defp beam_module(beam_path) do
@@ -161,5 +174,9 @@ defmodule Treeshake do
 
   defp filter_ext(paths, ext) do
     Enum.filter(paths, fn path -> Path.extname(path) == ext end)
+  end
+
+  defp keyword_concat_default(kw, key, default) do
+    Keyword.update(kw, key, default, &(&1 ++ default))
   end
 end
