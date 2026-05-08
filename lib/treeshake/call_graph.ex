@@ -49,14 +49,16 @@ defmodule Treeshake.CallGraph do
     protocols_impls =
       Enum.flat_map(module_index, fn
         {module, %{protocol_impl: {protocol, type}}} ->
-          Map.get_lazy(module_index, protocol, fn ->
-            raise "Module #{module} implements unknown protocol #{protocol}"
-          end)
-          |> unless do
-            raise "Module #{module} implements #{protocol} as if it was a protocol, but it's not"
-          end
+          case module_index[protocol] do
+            %{abstraction: {:protocol, _funs}} ->
+              [%{protocol: protocol, type: type, impl: module}]
 
-          [%{protocol: protocol, type: type, impl: module}]
+            nil ->
+              []
+
+            _non_protocol ->
+              raise "Module #{module} implements #{protocol} as if it was a protocol, but it's not"
+          end
 
         _non_protocol ->
           []
@@ -121,9 +123,9 @@ defmodule Treeshake.CallGraph do
               callbacks
 
             nil ->
-              raise "Module #{module} implements unknown behaviour #{behaviour}"
+              []
 
-            _info ->
+            _non_behaviour ->
               raise "Module #{module} implements #{behaviour} as if it was a behaviour, but it's not"
           end
           |> Enum.map(fn {f, a} -> {module, f, a} end)
