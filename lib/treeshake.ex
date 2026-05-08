@@ -10,8 +10,11 @@ defmodule Treeshake do
 
   @force_drop [
     :erl_lint,
+    # TODO: it's probably used to parse app files,
+    # figure out how to get rid of it
     # :erl_eval,
-    :elixir_parser
+    :elixir_parser,
+    :elixir_tokenizer
   ]
 
   def run(opts) do
