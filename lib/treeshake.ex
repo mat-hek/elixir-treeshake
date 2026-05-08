@@ -140,6 +140,7 @@ defmodule Treeshake do
   defp non_treeshakable_stdlib_modules() do
     exclusions =
       [
+        :unicode_util,
         :erl_parse,
         :epp,
         :erl_scan,
