@@ -10,6 +10,7 @@ defmodule Treeshake do
 
   @force_drop [
     :erl_lint,
+    # :erl_eval,
     :elixir_parser
   ]
 
@@ -142,7 +143,6 @@ defmodule Treeshake do
         :erl_parse,
         :epp,
         :erl_scan,
-        Code.Formatter,
         :prim_inet,
         :qlc,
         :qlc_pt,
@@ -157,7 +157,16 @@ defmodule Treeshake do
         :zip,
         # :inet_db,
         :edlin_expand,
-        :dets_utils
+        :dets_utils,
+        :erl_pp,
+        :beam_lib,
+        :ms_transform,
+        :lists,
+        :erlang,
+        :string,
+        :uri_string,
+        :inet,
+        :rand
       ] ++ @force_drop
 
     @non_treeshakable_apps
