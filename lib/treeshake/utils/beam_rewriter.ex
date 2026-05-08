@@ -30,7 +30,7 @@ defmodule Treeshake.Utils.BeamRewriter do
     to_keep = MapSet.new(functions)
     stub_removed_public = Keyword.get(opts, :stub_removed_public, false)
 
-    {module, core} = read_core!(beam_path)
+    {:ok, module, core} = Treeshake.Utils.BeamReader.read_core(beam_path)
 
     {:c_module, anno, name, exports, attrs, defs} = core
 
@@ -81,37 +81,6 @@ defmodule Treeshake.Utils.BeamRewriter do
        [{:c_literal, [], module}, {:c_literal, [], fname}, {:c_literal, [], farity}]}
 
     {{:c_var, [], {fname, farity}}, {:c_fun, [], vars, body}}
-  end
-
-  defp read_core!(beam_path) do
-    if File.exists?(beam_path <> ".core") do
-      core = (beam_path <> ".core") |> File.read!() |> :erlang.binary_to_term()
-      module = beam_path |> Path.basename(".beam") |> String.to_atom()
-      {module, core}
-    else
-      case beam_path |> String.to_charlist() |> :beam_lib.chunks([:abstract_code]) do
-        {:ok, {module, [abstract_code: {:raw_abstract_v1, abstract_forms}]}} ->
-          case :compile.noenv_forms(abstract_forms, [:to_core]) do
-            {:ok, ^module, core} ->
-              {module, core}
-
-            {:ok, ^module, core, _warnings} ->
-              {module, core}
-
-            error ->
-              raise "failed to convert #{beam_path} to core erlang: #{inspect(error)}"
-          end
-
-        {:ok, {_module, [abstract_code: :no_abstract_code]}} ->
-          raise "no abstract code (debug_info) in #{beam_path}"
-
-        {:error, :beam_lib, reason} ->
-          raise "failed to read BEAM #{beam_path}: #{inspect(reason)}"
-
-        error ->
-          raise "unexpected error reading #{beam_path}: #{inspect(error)}"
-      end
-    end
   end
 
   defp compile!(module, core, beam_path) do

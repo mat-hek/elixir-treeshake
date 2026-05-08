@@ -1,7 +1,7 @@
 defmodule Treeshake.Utils.BeamAnalyzerTest do
   use ExUnit.Case, async: true
 
-  alias Treeshake.Utils.BeamReader.FunctionInfo
+  alias Treeshake.Utils.BeamParser.FunctionInfo
   alias Treeshake.Utils.BeamAnalyzer
   alias Treeshake.Utils.BeamAnalyzer.PublicFunctionInfo
 

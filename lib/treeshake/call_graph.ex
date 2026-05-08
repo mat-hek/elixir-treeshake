@@ -3,7 +3,7 @@ defmodule Treeshake.CallGraph do
   Builds a call graph from a collection of BEAM files, seeded by a set of
   entry-point MFA tuples.
 
-  Each BEAM file is read with `Treeshake.Utils.BeamReader` and its
+  Each BEAM file is read with `Treeshake.Utils.BeamParser` and its
   public-function call sites are resolved with `Treeshake.Utils.BeamAnalyzer`
   (private functions are flattened into their public callers).  A BFS is then
   performed from the given entry points, collecting only functions that are

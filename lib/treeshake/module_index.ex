@@ -1,7 +1,7 @@
 defmodule Treeshake.ModuleIndex do
   def build(beam_paths, hardcoded_calls) do
     process_async(beam_paths, fn path ->
-      info = Treeshake.Utils.BeamReader.read!(path)
+      info = Treeshake.Utils.BeamParser.read!(path)
 
       info =
         case Map.fetch(hardcoded_calls, info.module) do

@@ -1,13 +1,13 @@
 defmodule Treeshake.Utils.BeamAnalyzer do
   @moduledoc """
-  Analyzes the output of `Treeshake.Utils.BeamReader.read/2`, resolving the
+  Analyzes the output of `Treeshake.Utils.BeamParser.read/2`, resolving the
   call-graph through private functions so callers can reason about public-function
   boundaries without tracking private implementation details themselves.
   """
 
   alias Treeshake.Utils.Graph
-  alias Treeshake.Utils.BeamReader
-  alias Treeshake.Utils.BeamReader.FunctionInfo
+  alias Treeshake.Utils.BeamParser
+  alias Treeshake.Utils.BeamParser.FunctionInfo
 
   defmodule PublicFunctionInfo do
     @moduledoc false
@@ -26,7 +26,7 @@ defmodule Treeshake.Utils.BeamAnalyzer do
         }
 
   @doc """
-  Analyzes the module info returned by `Treeshake.Utils.BeamReader.read/2`.
+  Analyzes the module info returned by `Treeshake.Utils.BeamParser.read/2`.
 
   Returns a map with:
     * `:public_functions` — map from `{name, arity}` to a `PublicFunctionInfo`
@@ -38,7 +38,7 @@ defmodule Treeshake.Utils.BeamAnalyzer do
   Always includes `:abstraction`, `:behaviour_impls`, and `:protocol_impl`,
   passed through from the input.
   """
-  @spec analyze(BeamReader.module_info()) :: analysis()
+  @spec analyze(BeamParser.module_info()) :: analysis()
   def analyze(%{module: module, functions: functions} = module_info) do
     {pub_fns, priv_fns} = Enum.split_with(functions, & &1.public)
 

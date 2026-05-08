@@ -24,7 +24,6 @@ defmodule Treeshake.Shaker do
 
     output_dir = Map.get(opts, :output_dir)
 
-    # Fixme: add the path to the result in beam reader and take the files from the module index instead
     ebin_files =
       if opts.dry_run do
         opts.ebin_files
@@ -34,7 +33,6 @@ defmodule Treeshake.Shaker do
         Enum.map(opts.ebin_files, fn src ->
           output_path = Path.join(output_dir, Path.basename(src))
           File.copy!(src, output_path)
-          if File.exists?(src <> ".core"), do: File.copy!(src <> ".core", output_path <> ".core")
           output_path
         end)
       end
