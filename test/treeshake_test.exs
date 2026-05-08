@@ -8,7 +8,7 @@ defmodule TreeshakeTest do
   @moduletag :tmp_dir
 
   defp treeshake(opts) do
-    Treeshake.run([project: @fixture] ++ opts)
+    Treeshake.run([project: @fixture, copy_stdlibs: true] ++ opts)
   end
 
   setup_all do

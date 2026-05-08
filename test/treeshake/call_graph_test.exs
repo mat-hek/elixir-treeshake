@@ -3,7 +3,7 @@ defmodule Treeshake.CallGraphTest do
 
   setup_all do
     graph =
-      Treeshake.config(project: "test/fixtures/demo_app")
+      Treeshake.config(project: "test/fixtures/demo_app", copy_stdlibs: true)
       |> Treeshake.build_module_index()
       |> Treeshake.build_call_graph()
       |> then(& &1.call_graph)

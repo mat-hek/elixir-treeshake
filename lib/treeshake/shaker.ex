@@ -104,7 +104,9 @@ defmodule Treeshake.Shaker do
         |> Enum.sort(),
       modules_rewritten: to_shake |> Enum.map(&beam_module/1) |> Enum.sort(),
       modules_ignored: not_touch |> Enum.sort(),
-      output_dir: output_dir
+      output_dir: output_dir,
+      module_index: module_index,
+      call_graph: call_graph
     }
   end
 

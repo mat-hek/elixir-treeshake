@@ -105,7 +105,7 @@ defmodule Treeshake do
     ebin_files =
       Keyword.get(opts, :ebin_files, []) ++
         project_ebin_files ++
-        if Keyword.get(opts, :copy_stdlibs, true), do: get_stdlibs(), else: []
+        if Keyword.get(opts, :copy_stdlibs, false), do: get_stdlibs(), else: []
 
     ebin_files = Enum.uniq_by(ebin_files, &Path.basename/1)
     opts = Keyword.put(opts, :ebin_files, ebin_files)
