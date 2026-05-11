@@ -1,5 +1,4 @@
 defprotocol DemoApp.Formatter do
-  @doc "Formats a value as a string."
   def format(value)
 end
 

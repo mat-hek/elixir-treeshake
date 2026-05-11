@@ -1,29 +1,4 @@
 defmodule Treeshake.Utils.BeamRewriter do
-  @moduledoc """
-  Low-level utility for rewriting compiled BEAM files by keeping only specific functions.
-
-  Reads the abstract code chunk, converts to core erlang, strips all functions not in the
-  keep list (along with their export entries and typespecs), recompiles from core erlang,
-  and returns the resulting binary.
-
-  Raises if the BEAM cannot be read, has no `debug_info`, or fails to recompile.
-  """
-
-  @doc """
-  Keep only `functions` in the BEAM file at `beam_path` and return the new binary.
-
-  `functions` is a list of `{name, arity}` tuples identifying the functions to
-  retain. All other functions, their export entries, typespecs, and inline hints
-  are removed.
-
-  ## Options
-
-    * `:stub_removed_public` - when `true`, removed public (exported) functions are
-      replaced with stub implementations that raise `Treeshake.Treeshaked` at runtime,
-      carrying the module, function name, and arity. Defaults to `false`.
-
-  Raises on any failure (missing file, no debug_info, compile error, etc.).
-  """
   @spec keep_funs(Path.t(), [{atom(), non_neg_integer()}], map()) ::
           {binary(), [{atom(), non_neg_integer()}]}
   def keep_funs(beam_path, functions, opts \\ []) do

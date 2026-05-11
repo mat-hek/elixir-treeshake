@@ -1,10 +1,5 @@
 defmodule Treeshake.Utils.BeamParser do
-  @moduledoc """
-  Reads core erlang from a BEAM file and extracts metadata about its functions.
-  """
-
   defmodule FunctionInfo do
-    @moduledoc false
     defstruct [:name, :arity, :public, :calls, :potential_modules]
   end
 
@@ -20,34 +15,6 @@ defmodule Treeshake.Utils.BeamParser do
           protocol_impl: [{atom(), atom()}]
         }
 
-  @doc """
-  Reads a BEAM file and returns metadata about its functions.
-
-  For each function the returned `FunctionInfo` struct contains:
-    * `:name` / `:arity` — identity
-    * `:public` — `true` when exported
-    * `:calls` — list of `{module, fun, arity}` tuples for all statically
-      visible call sites (local calls have `module == nil`) and hardcoded
-      MFA tuples
-    * `:potential_modules` — hardcoded atom literals that may be module
-      references (atoms not already consumed as the `m` or `f` part of a
-      call or MFA tuple)
-    * `:matching_terms` — values collected by `filter`
-
-  The filter receives **reconstructed shapes**: tuple and list literals are
-  structurally reconstructed into Elixir values; non-literal sub-expressions
-  (variables, calls, …) are kept as raw AST nodes within them. Scalar literals
-  are passed as their plain Elixir value (`:ok`, `1`, …). The filter should
-  return `{:match, value}` to collect `value`, or anything else to skip.
-
-  Enumerating a `FunctionInfo` iterates over its `matching_terms`.
-
-  `:abstraction` is `{:protocol, callbacks}` for `defprotocol` modules,
-  `{:behaviour, callbacks}` for behaviour definitions, and `nil` otherwise.
-  `:protocol_impl` is non-empty only for `defimpl` modules.
-
-  Returns `{:ok, module_info()}` or `:error`.
-  """
   @spec read(Path.t()) :: {:ok, module_info()} | :error
   def read(beam_path) do
     case Treeshake.Utils.BeamReader.read_core(beam_path) do

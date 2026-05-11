@@ -1,17 +1,4 @@
 defmodule Treeshake.CallGraph do
-  @moduledoc """
-  Builds a call graph from a collection of BEAM files, seeded by a set of
-  entry-point MFA tuples.
-
-  Each BEAM file is read with `Treeshake.Utils.BeamParser` and its
-  public-function call sites are resolved with `Treeshake.Utils.BeamAnalyzer`
-  (private functions are flattened into their public callers).  A BFS is then
-  performed from the given entry points, collecting only functions that are
-  reachable and are known public functions from the provided BEAM files.
-
-  The resulting graph is compatible with `Treeshake.Reachability`.
-  """
-
   alias Treeshake.Utils.Graph
   @type mfa_tuple :: {atom(), atom(), non_neg_integer()}
   @type graph :: %{mfa_tuple() => [mfa_tuple()]}
@@ -31,19 +18,6 @@ defmodule Treeshake.CallGraph do
     Any
   ]
 
-  @doc """
-  Builds a call graph from the given BEAM files, seeded by `keep`.
-
-  Reads every BEAM file, analyses its public-function call sites, and performs
-  a breadth-first traversal from `keep`.
-
-  Returns `%{ {M, F, A} => [{M2, F2, A2}, ...] }` where each key is a
-  reachable MFA and its value is the full list of MFAs it calls (including
-  calls to external modules not present in the provided BEAM list — those
-  will appear in values but not as keys).
-
-  BEAM files that cannot be read (no debug info, corrupt, etc.) are skipped.
-  """
   @spec create([Path.t()], [mfa_tuple()]) :: graph()
   def create(module_index, keep) do
     protocols_impls =

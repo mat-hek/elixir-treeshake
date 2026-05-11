@@ -1,21 +1,4 @@
 defmodule Treeshake.Utils.Graph do
-  @moduledoc """
-  Generic graph traversal utilities.
-
-  - `bfs/3` — breadth-first traversal, graph-agnostic (neighbors supplied by caller).
-  - `dfs/5` — depth-first traversal over a `%{node => [node]}` adjacency map,
-    with explicit direction (`:down` follows edges forward, `:up` follows them in reverse).
-  """
-
-  @doc """
-  Performs a breadth-first traversal starting from `seeds`.
-
-  For each unvisited node the `visit` function is called with `(node, acc)`.
-  It must return `{neighbors, acc}` where `neighbors` is the list of nodes to
-  enqueue next (already-visited ones are skipped automatically).
-
-  Returns the final accumulator after all reachable nodes have been visited.
-  """
   @spec bfs(Enumerable.t(), acc, (node, acc -> {[node], acc})) :: acc
         when node: term(), acc: term()
   def bfs(seeds, acc, visit) do
@@ -42,18 +25,6 @@ defmodule Treeshake.Utils.Graph do
     do_bfs(queue, visited, acc, visit)
   end
 
-  @doc """
-  Performs a depth-first traversal over an adjacency map `graph` starting from `seeds`.
-
-  `direction` controls which edges are followed:
-  - `:down` — forward edges: neighbors are `graph[node]` (callees).
-  - `:up`   — reverse edges: neighbors are nodes whose adjacency list contains `node` (callers).
-
-  `visit` is called as `visit.(node, acc)` and must return the updated accumulator.
-  Already-visited nodes are skipped.
-
-  Returns the final accumulator after all reachable nodes have been visited.
-  """
   @spec dfs(
           %{node => [node]},
           Enumerable.t(),
@@ -86,15 +57,6 @@ defmodule Treeshake.Utils.Graph do
     do_dfs(graph, stack, visited, acc, visit, direction)
   end
 
-  @doc """
-  Returns all paths from `seeds` to leaf nodes reachable in `direction`.
-
-  A leaf is a node with no unvisited neighbors in the chosen direction.
-  Cycles are broken per-path (a node already on the current path is not revisited),
-  so the same node may appear in multiple returned paths via different routes.
-
-  Returns a list of node lists, each starting at a seed and ending at a leaf.
-  """
   @spec reachable_paths(%{node => [node]}, Enumerable.t(), :down | :up, keyword()) :: [[node]]
         when node: term()
   def reachable_paths(graph, seeds, direction, opts \\ []) do
@@ -124,20 +86,6 @@ defmodule Treeshake.Utils.Graph do
     end
   end
 
-  @doc """
-  Converts an adjacency map to a DOT-format string suitable for Graphviz.
-
-  Each key in `graph` becomes a node, and each edge `{from, to}` becomes a
-  directed arrow. Node labels are derived by calling `to_string/1` on each
-  node, so MFA tuples like `{MyApp.Foo, :bar, 2}` render as
-  `"Elixir.MyApp.Foo.bar/2"`.
-
-  ## Example
-
-      iex> graph = %{{Foo, :a, 0} => [{Bar, :b, 1}], {Bar, :b, 1} => []}
-      iex> Treeshake.Utils.Graph.to_dot(graph)
-      ~s(digraph {\\n  "Foo.a/0" -> "Bar.b/1"\\n  "Bar.b/1"\\n}\\n)
-  """
   @spec to_dot(%{node => [node]}, keyword()) :: String.t()
         when node: term()
   def to_dot(graph, _opts \\ []) do
@@ -159,21 +107,6 @@ defmodule Treeshake.Utils.Graph do
     "digraph {\n#{Enum.join(lines, "\n")}\n}\n"
   end
 
-  @doc """
-  Returns the subgraph induced by all nodes reachable from `node` within `distance` hops.
-
-  Follows forward edges. The result contains every node (including `node` itself)
-  reachable in at most `distance` steps, with adjacency lists trimmed to only
-  include edges whose target is also within the neighborhood.
-
-  ## Example
-
-      iex> Treeshake.Utils.Graph.neighborhood(%{a: [:b, :c], b: [:d], c: [], d: []}, :a, 1)
-      %{a: [:b, :c], b: [], c: []}
-
-      iex> Treeshake.Utils.Graph.neighborhood(%{a: [:b, :c], b: [:d], c: [], d: []}, :a, 2)
-      %{a: [:b, :c], b: [:d], c: [], d: []}
-  """
   @spec neighborhood(%{node => [node]}, node, non_neg_integer()) :: %{node => [node]}
         when node: term()
   def neighborhood(graph, node, distance) do
@@ -203,21 +136,6 @@ defmodule Treeshake.Utils.Graph do
     do_neighborhood(graph, queue, visited, distance)
   end
 
-  @doc """
-  Converts an adjacency map to a Mermaid flowchart string.
-
-  Each key in `graph` becomes a node, and each edge `{from, to}` becomes a
-  directed arrow. Node labels are derived by calling `to_string/1` on each node.
-  Special characters in labels (e.g. `/`, `.`, `<`, `>`, `*`) are safe because
-  each node is assigned a unique integer ID (e.g. `n0`, `n1`), while the original
-  label is preserved in quotes.
-
-  ## Example
-
-      iex> graph = %{{Foo, :a, 0} => [{Bar, :b, 1}], {Bar, :b, 1} => []}
-      iex> Treeshake.Utils.Graph.to_mermaid(graph) |> String.starts_with?("flowchart TD")
-      true
-  """
   @spec to_mermaid(%{node => [node]}) :: String.t() when node: term()
   def to_mermaid(graph) do
     ids =
@@ -241,18 +159,6 @@ defmodule Treeshake.Utils.Graph do
     """
   end
 
-  @doc """
-  Reverses an adjacency map, swapping edge direction.
-
-  Each edge `from -> to` in `graph` becomes `to -> from` in the result.
-  Nodes that appear only as targets (with no outgoing edges) are added as
-  keys with empty adjacency lists.
-
-  ## Example
-
-      iex> Treeshake.Utils.Graph.reverse(%{a: [:b, :c], b: [:c], c: []})
-      %{a: [], b: [:a], c: [:a, :b]}
-  """
   @spec reverse(%{node => [node]}) :: %{node => [node]} when node: term()
   def reverse(graph) do
     base = Map.new(graph, fn {k, _} -> {k, []} end)
