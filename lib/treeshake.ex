@@ -38,14 +38,9 @@ defmodule Treeshake do
   def build_module_index(%{opts: opts} = config) do
     if opts.verbose, do: IO.puts("Building module index")
 
-    to_skip = opts.drop ++ opts.ignore
+    module_index = Treeshake.ModuleIndex.build(opts, @hardcoded)
 
-    beams =
-      opts.ebin_files
-      |> filter_ext(".beam")
-      |> Enum.reject(&(beam_module(&1) in to_skip))
-
-    %{config | module_index: Treeshake.ModuleIndex.build(beams, @hardcoded)}
+    %{config | module_index: module_index}
   end
 
   def build_call_graph(%{opts: opts, module_index: module_index} = config)

@@ -18,7 +18,7 @@ defmodule Treeshake.Shaker do
   @module_stub module_stub
 
   def shake(opts, call_graph, module_index) do
-    not_touch = MapSet.new(opts.ignore ++ opts.leave)
+    leave = MapSet.new(opts.leave)
     stub_removed_functions = Map.get(opts, :stub_removed_functions, false)
     stub_removed_modules = Map.get(opts, :stub_removed_modules, false)
 
@@ -40,7 +40,7 @@ defmodule Treeshake.Shaker do
     beams =
       ebin_files
       |> Enum.filter(&(Path.extname(&1) == ".beam"))
-      |> Enum.reject(&(beam_module(&1) in not_touch))
+      |> Enum.reject(&(beam_module(&1) in leave))
 
     reachable_mods_funs =
       call_graph
@@ -103,7 +103,6 @@ defmodule Treeshake.Shaker do
         end)
         |> Enum.sort(),
       modules_rewritten: to_shake |> Enum.map(&beam_module/1) |> Enum.sort(),
-      modules_ignored: not_touch |> Enum.sort(),
       output_dir: output_dir,
       module_index: module_index,
       call_graph: call_graph

@@ -227,24 +227,17 @@ defmodule Treeshake.Utils.Graph do
       |> Enum.with_index(fn node, i -> {node, "n#{i}"} end)
       |> Map.new()
 
-    mermaid_node = fn node ->
-      ~s(#{ids[node]}["#{node_label(node)}"])
-    end
+    nodes = Enum.map(ids, fn {node, id} -> ~s|#{id}["#{node_label(node)}"]| end)
 
-    lines =
+    edges =
       Enum.flat_map(graph, fn
-        {from, []} ->
-          ["#{mermaid_node.(from)}"]
-
-        {from, tos} ->
-          Enum.map(tos, fn to ->
-            "#{mermaid_node.(from)} --> #{mermaid_node.(to)}"
-          end)
+        {from, []} -> [ids[from]]
+        {from, tos} -> Enum.map(tos, fn to -> "#{ids[from]} --> #{ids[to]}" end)
       end)
 
     """
     flowchart TD
-    #{Enum.map_join(lines, "\n", &"  #{&1}")}
+    #{Enum.map_join(nodes ++ edges, "\n", &"  #{&1}")}
     """
   end
 
@@ -281,11 +274,7 @@ defmodule Treeshake.Utils.Graph do
   end
 
   defp node_label({m, f, a}) do
-    mod =
-      m
-      |> Atom.to_string()
-      |> String.replace_prefix("Elixir.", "")
-
+    mod = m |> Atom.to_string() |> String.replace_prefix("Elixir.", "")
     "#{mod}.#{f}/#{a}"
   end
 
