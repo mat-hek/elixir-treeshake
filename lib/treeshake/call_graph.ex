@@ -67,8 +67,20 @@ defmodule Treeshake.CallGraph do
     protocols_impls_by_protocol = Enum.group_by(protocols_impls, & &1.protocol)
     protocols_impls_by_type = Enum.group_by(protocols_impls, & &1.type)
 
+    behaviour_impls =
+      module_index
+      |> Enum.flat_map(fn {module, %{behaviour_impls: behaviours}} ->
+        Enum.map(behaviours, &%{module: module, behaviour: &1})
+      end)
+      |> Enum.group_by(& &1.behaviour, & &1.module)
+
     keep =
-      Enum.flat_map(keep, fn
+      keep
+      |> Enum.flat_map(fn
+        %{behaviour_impls: behaviour} -> Map.get(behaviour_impls, behaviour, [])
+        entry -> [entry]
+      end)
+      |> Enum.flat_map(fn
         {m, f, a} ->
           [{m, f, a}]
 
