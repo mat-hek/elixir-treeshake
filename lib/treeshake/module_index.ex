@@ -1,10 +1,10 @@
 defmodule Treeshake.ModuleIndex do
-  def build(beam_paths, hardcoded_calls) do
+  def build(beam_paths, hardcoded) do
     process_async(beam_paths, fn path ->
       info = Treeshake.Utils.BeamParser.read!(path)
 
       info =
-        case Map.fetch(hardcoded_calls, info.module) do
+        case Map.fetch(hardcoded.calls, info.module) do
           {:ok, calls} ->
             %{info | functions: Enum.map(info.functions, &%{&1 | calls: calls ++ &1.calls})}
 
@@ -13,11 +13,11 @@ defmodule Treeshake.ModuleIndex do
         end
 
       info =
-        case info do
-          %{module: :application_controller} = info ->
-            %{info | behaviour_impls: [:gen_server | info.behaviour_impls]}
+        case Map.fetch(hardcoded.behaviour_impls, info.module) do
+          {:ok, behaviour_impls} ->
+            %{info | behaviour_impls: behaviour_impls ++ info.behaviour_impls}
 
-          info ->
+          :error ->
             info
         end
 

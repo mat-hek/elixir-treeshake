@@ -4,8 +4,13 @@ defmodule Treeshake do
 
   @default_ignore_modules [:prim_eval]
 
-  @hardcoded_calls %{
-    Elixir.Supervisor => [{Elixir.Supervisor.Default, :init, 1}]
+  @hardcoded %{
+    calls: %{
+      Supervisor => [{Supervisor.Default, :init, 1}]
+    },
+    behaviour_impls: %{
+      :application_controller => [:gen_server]
+    }
   }
 
   @force_drop [
@@ -40,7 +45,7 @@ defmodule Treeshake do
       |> filter_ext(".beam")
       |> Enum.reject(&(beam_module(&1) in to_skip))
 
-    %{config | module_index: Treeshake.ModuleIndex.build(beams, @hardcoded_calls)}
+    %{config | module_index: Treeshake.ModuleIndex.build(beams, @hardcoded)}
   end
 
   def build_call_graph(%{opts: opts, module_index: module_index} = config)
