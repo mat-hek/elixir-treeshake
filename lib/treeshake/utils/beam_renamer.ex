@@ -1,4 +1,9 @@
 defmodule Treeshake.Utils.BeamRenamer do
+  @moduledoc false
+
+  # Renames a compiled beam file. Mostly vibe-coded.
+
+  @spec rename(binary(), module) :: binary()
   def rename(module, new_name) when is_atom(new_name) do
     {:ok, old_name, chunks} = :beam_lib.all_chunks(module)
 

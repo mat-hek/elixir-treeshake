@@ -1,4 +1,8 @@
 defmodule Treeshake.Utils.BeamReader do
+  @moduledoc false
+  # Reads core erlang from a beam file
+
+  @spec read_core(String.t()) :: {:ok, module(), core_ast :: term()} | :error
   def read_core(beam_path) do
     with :error <- read_core_from_abstract_code(beam_path),
          :error <- read_core_from_custom_debug_info(beam_path) do

@@ -1,6 +1,12 @@
 defmodule Treeshake.Utils.BeamRewriter do
-  @spec keep_funs(Path.t(), [{atom(), non_neg_integer()}], map()) ::
-          {binary(), [{atom(), non_neg_integer()}]}
+  @moduledoc false
+
+  # Rewrites a core erlang module, keeping only given functions.
+  # Mostly vibe-coded.
+
+  @spec keep_funs(Path.t(), [function_arity], [{:stub_removed_public, boolean()}]) ::
+          {binary(), [function_arity]}
+        when function_arity: {atom(), non_neg_integer()}
   def keep_funs(beam_path, functions, opts \\ []) do
     to_keep = MapSet.new(functions)
     stub_removed_public = Keyword.get(opts, :stub_removed_public, false)

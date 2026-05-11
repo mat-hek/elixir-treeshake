@@ -1,4 +1,11 @@
 defmodule Treeshake.ModuleIndex do
+  @moduledoc false
+
+  # Builds a %{module => info} map using reader, analyzer and privates_resolver.
+  # Injects hardcoded information.
+
+  @type t :: %{module() => PrivatesResolver.module_info()}
+
   def build(opts, hardcoded) do
     {ignore_modules, ignore_funs} = Enum.split_with(opts.ignore, &is_atom/1)
     skip_modules = MapSet.new(ignore_modules ++ opts.drop)
@@ -8,7 +15,8 @@ defmodule Treeshake.ModuleIndex do
     |> Enum.filter(&(Path.extname(&1) == ".beam"))
     |> Enum.reject(&(beam_module(&1) in skip_modules))
     |> process_async(fn path ->
-      info = Treeshake.Utils.BeamParser.read!(path)
+      {:ok, module, core} = Treeshake.Utils.BeamReader.read_core(path)
+      info = Treeshake.Utils.BeamAnalyzer.analyze(module, core)
       %{module: module} = info
 
       info =
@@ -40,9 +48,9 @@ defmodule Treeshake.ModuleIndex do
 
       info = %{info | functions: functions}
 
-      analysis = Treeshake.Utils.BeamAnalyzer.analyze(info)
+      info = Treeshake.Utils.PrivatesResolver.resolve(info)
 
-      {analysis.module, analysis}
+      {info.module, info}
     end)
   end
 

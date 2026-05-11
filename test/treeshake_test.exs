@@ -8,7 +8,7 @@ defmodule TreeshakeTest do
   @moduletag :tmp_dir
 
   defp treeshake(opts) do
-    Treeshake.run([project: @fixture, copy_stdlibs: true] ++ opts)
+    Treeshake.run([project: @fixture, include_stdlibs: true] ++ opts)
   end
 
   setup_all do
@@ -59,7 +59,7 @@ defmodule TreeshakeTest do
   describe "function-level removal" do
     async_test "removes unused/1 from DemoApp.Worker (non-dead module)", ctx do
       stats = get_stats(ctx)
-      assert {DemoApp.Worker, :unused, 1} in stats.functions_removed
+      assert {:unused, 1} in stats.modules_shaked[DemoApp.Worker]
     end
 
     async_test "unused/1 is not callable after tree-shaking", ctx do

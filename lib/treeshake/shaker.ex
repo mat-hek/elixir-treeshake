@@ -1,4 +1,12 @@
 defmodule Treeshake.Shaker do
+  @moduledoc false
+
+  # Removes modules and functions from a beam file based on call graph
+  # and module index.
+  # Uses BeamRewriter to change the beams.
+
+  alias Treeshake.Utils.{EmptyModuleStub, BeamRenamer, BeamRewriter}
+
   @keep_funs [
     module_info: 0,
     module_info: 1,
@@ -8,15 +16,7 @@ defmodule Treeshake.Shaker do
     impl_for: 1
   ]
 
-  [{_name, module_stub}] =
-    quote do
-      defmodule Treeshake.EmptyModuleStub do
-      end
-    end
-    |> Code.compile_quoted()
-
-  @module_stub module_stub
-
+  @spec shake(map, Treeshake.CallGraph.t(), Treeshake.ModuleIndex.t()) :: Treeshake.stats()
   def shake(opts, call_graph, module_index) do
     leave = MapSet.new(opts.leave)
     stub_removed_functions = Map.get(opts, :stub_removed_functions, false)
@@ -52,57 +52,44 @@ defmodule Treeshake.Shaker do
 
     {to_shake, to_remove} = Enum.split_with(beams, &(beam_module(&1) in reachable_mods))
 
-    functions_removed =
+    modules_shaked =
       process_async(
         to_shake,
         fn path ->
-          {shaked, functions_removed} =
+          {shaked, modules_shaked} =
             do_shake(path, reachable_mods_funs, module_index, stub_removed_functions)
 
           unless opts.dry_run, do: File.write!(path, shaked)
-          {beam_module(path), functions_removed}
+          {beam_module(path), modules_shaked}
         end
       )
 
-    {beams_removed, functions_removed} =
-      if stub_removed_functions do
-        functions_stubbed =
-          process_async(to_remove, fn path ->
-            {shaked, functions_removed} =
-              Treeshake.Utils.BeamRewriter.keep_funs(path, [], stub_removed_public: true)
+    # Handle to_remove (modules that should be tree-shaked completely)
+    cond do
+      stub_removed_functions ->
+        process_async(to_remove, fn path ->
+          {shaked, _modules_shaked} = BeamRewriter.keep_funs(path, [], stub_removed_public: true)
+          unless opts.dry_run, do: File.write!(path, shaked)
+        end)
 
-            unless opts.dry_run, do: File.write!(path, shaked)
-            {beam_module(path), functions_removed}
-          end)
+      stub_removed_modules ->
+        module_stub = File.read!(:code.which(EmptyModuleStub))
 
-        {[], Map.merge(functions_removed, functions_stubbed)}
-      else
-        unless opts.dry_run, do: Enum.each(to_remove, &File.rm!/1)
-        {to_remove, functions_removed}
-      end
-
-    beams_removed =
-      if stub_removed_modules do
-        for beam <- beams_removed do
-          stub = Treeshake.Utils.BeamRenamer.rename(@module_stub, beam_module(beam))
-          unless opts.dry_run, do: File.write!(beam, stub)
+        for path <- to_remove do
+          stub = BeamRenamer.rename(module_stub, beam_module(path))
+          unless opts.dry_run, do: File.write!(path, stub)
         end
 
-        []
-      else
-        beams_removed
-      end
+      opts.dry_run == false ->
+        Enum.each(to_remove, &File.rm!/1)
+
+      true ->
+        :ok
+    end
 
     %{
-      modules_removed: beams_removed |> Enum.map(&beam_module/1) |> Enum.sort(),
-      beams_removed: beams_removed |> Enum.sort(),
-      functions_removed:
-        functions_removed
-        |> Enum.flat_map(fn {m, fa} ->
-          Enum.map(fa, fn {f, a} -> {m, f, a} end)
-        end)
-        |> Enum.sort(),
-      modules_rewritten: to_shake |> Enum.map(&beam_module/1) |> Enum.sort(),
+      modules_removed: to_remove |> Enum.map(&beam_module/1) |> Enum.sort(),
+      modules_shaked: modules_shaked,
       output_dir: output_dir,
       module_index: module_index,
       call_graph: call_graph
@@ -110,13 +97,13 @@ defmodule Treeshake.Shaker do
   end
 
   defp do_shake(path, reachable_mods_funs, module_index, stub_removed_functions) do
-    analysis = Map.fetch!(module_index, beam_module(path))
+    module_info = Map.fetch!(module_index, beam_module(path))
 
-    reachable_funs = @keep_funs ++ Map.fetch!(reachable_mods_funs, analysis.module)
+    reachable_funs = @keep_funs ++ Map.fetch!(reachable_mods_funs, module_info.module)
     reachable_mapset = MapSet.new(reachable_funs)
 
     reachable_privs =
-      Enum.flat_map(analysis.private_functions, fn {fun, called_by} ->
+      Enum.flat_map(module_info.private_functions, fn {fun, called_by} ->
         if Enum.any?(called_by, &(&1 in reachable_mapset)), do: [fun], else: []
       end)
 

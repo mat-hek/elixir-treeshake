@@ -1,7 +1,11 @@
 defmodule Treeshake.CallGraph do
+  @moduledoc false
+
+  # Creates a caller -> callee graph where nodes are only reachable functions (MFAs).
+
   alias Treeshake.Utils.Graph
-  @type mfa_tuple :: {atom(), atom(), non_neg_integer()}
-  @type graph :: %{mfa_tuple() => [mfa_tuple()]}
+
+  @type t :: Graph.t(mfa())
 
   @protocol_built_in_types [
     Tuple,
@@ -18,7 +22,7 @@ defmodule Treeshake.CallGraph do
     Any
   ]
 
-  @spec create([Path.t()], [mfa_tuple()]) :: graph()
+  @spec create(Treeshake.ModuleIndex.t(), [Treeshake.keep_entry()]) :: t()
   def create(module_index, keep) do
     protocols_impls =
       Enum.flat_map(module_index, fn
